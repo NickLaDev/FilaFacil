@@ -1,8 +1,17 @@
+# Dependências e builds
 node_modules/
 dist/
+coverage/
 *.tsbuildinfo
 .vite/
+
+# Ambiente (só o exemplo é versionado)
 .env*
 !.env.example
+
+# Arquivos enviados em desenvolvimento (storage local da API)
+apps/api/storage/
+
+# Diversos
 *.log
 .DS_Store

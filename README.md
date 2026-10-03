@@ -2,12 +2,13 @@
 
 Sistema de gerenciamento de filas e pedidos para bares e restaurantes. O cliente escaneia o QR Code da mesa, monta o pedido, paga pelo app e acompanha o preparo em tempo real, sem disputar espaço no balcão.
 
-Este repositório contém o **frontend** referente às **Sprints 1 e 2**. Ainda não há backend: os dados são mockados e ficam organizados para serem trocados pela API sem alterar as telas.
+Este é o repositório único do projeto (monorepo pnpm). Hoje ele contém o **frontend** referente às **Sprints 1 e 2**, em `apps/web`. Ainda não há backend: os dados são mockados e ficam organizados para serem trocados pela API sem alterar as telas.
 
-> A interface exibe a marca **FilaZero**, nome usado no protótipo e nas fichas das sprints. Para trocar a marca, altere `src/config/brand.ts` e o `<title>` do `index.html`.
+> A interface exibe a marca **FilaZero**, nome usado no protótipo e nas fichas das sprints. Para trocar a marca, altere `apps/web/src/config/brand.ts` e o `<title>` de `apps/web/index.html`.
 
 ## Sumário
 
+- [Organização do repositório](#organização-do-repositório)
 - [Stack](#stack)
 - [Requisitos](#requisitos)
 - [Como rodar](#como-rodar)
@@ -19,11 +20,24 @@ Este repositório contém o **frontend** referente às **Sprints 1 e 2**. Ainda 
 - [Integração com o backend](#integração-com-o-backend)
 - [Fora do escopo atual](#fora-do-escopo-atual)
 
+## Organização do repositório
+
+```
+.
+├── apps/
+│   └── web/              # Frontend React (@filafacil/web)
+├── packages/             # Código compartilhado entre apps (criado quando houver reuso real)
+├── package.json          # Scripts que orquestram todos os apps
+└── pnpm-workspace.yaml   # Declaração do workspace
+```
+
+Cada app tem seu próprio `package.json`, `tsconfig` e configuração de lint. Os comandos da raiz rodam em todos os apps; para atuar em um só, use `pnpm --filter <nome> <script>` (ex.: `pnpm --filter @filafacil/web build`).
+
 ## Stack
 
 - [React 19](https://react.dev) com TypeScript em modo `strict`
 - [Vite 8](https://vite.dev)
-- [Tailwind CSS v4](https://tailwindcss.com) (tokens de design em `src/index.css`)
+- [Tailwind CSS v4](https://tailwindcss.com) (tokens de design em `apps/web/src/index.css`)
 - [lucide-react](https://lucide.dev) para ícones
 - ESLint (`typescript-eslint`, `react-hooks`, `react-refresh`)
 - pnpm
@@ -35,20 +49,23 @@ Este repositório contém o **frontend** referente às **Sprints 1 e 2**. Ainda 
 
 ## Como rodar
 
+Na raiz do repositório:
+
 ```bash
 pnpm install
 pnpm dev
 ```
 
-A aplicação sobe em `http://localhost:5173`.
+O frontend sobe em `http://localhost:5173`.
 
-| Script           | O que faz                                  |
-|------------------|--------------------------------------------|
-| `pnpm dev`       | Servidor de desenvolvimento com HMR        |
-| `pnpm build`     | Checagem de tipos + build de produção (`dist/`) |
-| `pnpm preview`   | Serve o build de produção localmente       |
-| `pnpm typecheck` | Checagem de tipos (`tsc -b`)               |
-| `pnpm lint`      | ESLint em todo o projeto                   |
+| Script           | O que faz                                              |
+|------------------|--------------------------------------------------------|
+| `pnpm dev`       | Sobe todos os apps em modo desenvolvimento             |
+| `pnpm dev:web`   | Sobe só o frontend (Vite com HMR)                      |
+| `pnpm build`     | Checagem de tipos + build de produção de cada app      |
+| `pnpm preview`   | Serve o build de produção do frontend                  |
+| `pnpm typecheck` | Checagem de tipos de todos os apps                     |
+| `pnpm lint`      | ESLint em todos os apps                                |
 
 ## Perfis e rotas
 
@@ -134,12 +151,14 @@ A lista completa de códigos de mesa fica em **Gestor → QR Codes**. A senha n�
 
 ## Arquitetura
 
-- **Apps por perfil**: `src/App.tsx` resolve o perfil pela URL e carrega o app correspondente com `React.lazy`. Cliente, Atendente, Gestor e Admin evoluem de forma independente e geram chunks separados no build.
-- **Camada de dados**: as telas nunca leem os mocks diretamente. Elas usam hooks e funções de `src/services/`, que hoje operam sobre um store em memória espelhado no `localStorage` (`src/lib/store.ts`, prefixo `filafacil:v1:`). Por isso, uma alteração em um perfil aparece nos demais, inclusive em outra aba do navegador.
+- **Apps por perfil**: `apps/web/src/App.tsx` resolve o perfil pela URL e carrega o app correspondente com `React.lazy`. Cliente, Atendente, Gestor e Admin evoluem de forma independente e geram chunks separados no build.
+- **Camada de dados**: as telas nunca leem os mocks diretamente. Elas usam hooks e funções de `apps/web/src/services/`, que hoje operam sobre um store em memória espelhado no `localStorage` (`apps/web/src/lib/store.ts`, prefixo `filafacil:v1:`). Por isso, uma alteração em um perfil aparece nos demais, inclusive em outra aba do navegador.
 - **Tempo real simulado**: o status do pedido avança conforme o tempo decorrido (`orderService`), substituindo temporariamente os eventos do servidor.
 - **Segurança no cliente**: nenhum dado de cartão ou senha é persistido; o CPF fica salvo apenas mascarado e como hash para checar duplicidade; URLs de imagem aceitam somente `https` ou `data:image`.
 
 ## Estrutura de pastas
+
+Frontend (`apps/web/src/`):
 
 ```
 src/
@@ -160,7 +179,7 @@ src/
 
 ## Integração com o backend
 
-Para ligar a API, substitua a implementação dos arquivos em `src/services/` mantendo as mesmas assinaturas. Pontos que hoje são simulados:
+Para ligar a API, substitua a implementação dos arquivos em `apps/web/src/services/` mantendo as mesmas assinaturas. Pontos que hoje são simulados:
 
 - Envio e validação de códigos por SMS/e-mail e conferência de senha (`authService`)
 - OAuth com Google e Apple (`authService`)
