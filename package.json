@@ -1,13 +1,20 @@
 {
   "name": "filafacil",
   "private": true,
-  "description": "FilaFacil — monorepo com o frontend (apps/web) e a API (apps/api).",
+  "description": "FilaFacil — monorepo com o frontend (apps/web), a API (apps/api) e o código compartilhado (packages/shared).",
   "scripts": {
-    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "setup:env": "node scripts/setup-env.mjs",
+    "dev": "pnpm --filter @filafacil/shared build && pnpm --parallel --filter \"./apps/*\" dev",
     "dev:web": "pnpm --filter @filafacil/web dev",
+    "dev:api": "pnpm --filter @filafacil/api dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
+    "test": "pnpm --filter @filafacil/api test",
+    "db:up": "docker compose up -d --wait",
+    "db:migrate": "pnpm --filter @filafacil/api db:deploy",
+    "db:migrate:dev": "pnpm --filter @filafacil/api db:migrate",
+    "db:seed": "pnpm --filter @filafacil/api db:seed",
     "preview": "pnpm --filter @filafacil/web preview"
   },
   "engines": {
