@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Check, Mail, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPhone, isStrongPassword, isValidEmail, isValidPhone } from '@/lib/validation';
-import { RECOVERY_CODE_TTL_MS, requestPasswordRecovery, resetPassword } from '@/services/authService';
+import { RECOVERY_CODE_TTL_MS, requestPasswordRecovery, resetPassword } from '@/services/accountExtrasService';
 import { useClient } from '../clientContext';
 import { BackButton, ResultScreen } from '../components/Layout';
 import { LoadingButton, PasswordField, PasswordRequirements, TextField } from '../components/AuthFields';
@@ -11,7 +11,7 @@ import CodeVerification from '../components/CodeVerification';
 type Step = 'request' | 'code' | 'new-password' | 'success' | 'no-account';
 type Channel = 'email' | 'sms';
 
-/** Recuperação por e-mail ou SMS com código que expira (ficha 44). */
+/** Recuperação por e-mail ou SMS com código que expira (ficha 44, Sprint 2 — ainda simulada). */
 export default function ForgotPasswordScreen() {
   const { go } = useClient();
   const [step, setStep] = useState<Step>('request');
@@ -27,7 +27,7 @@ export default function ForgotPasswordScreen() {
 
   async function sendCode() {
     setLoading(true);
-    const found = await requestPasswordRecovery(channel, destination);
+    const found = await requestPasswordRecovery();
     setLoading(false);
     if (!found) return setStep('no-account');
     setSentAt(Date.now());

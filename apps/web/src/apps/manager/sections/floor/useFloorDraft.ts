@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useState } from 'react';
-import { getFloorLayout, useFloorLayout } from '@/services/floorService';
 import type { FloorLayout, FloorTable } from '@/types/floor';
 
 export type LayoutDraft = Pick<FloorLayout, 'tables' | 'merges'>;
@@ -9,20 +8,36 @@ const MAX_POSITION = 96;
 
 export const clampPosition = (value: number) => Math.round(Math.min(MAX_POSITION, Math.max(MIN_POSITION, value)));
 
-/** Edição acontece num rascunho; o atendente só vê a planta depois de "Salvar layout". */
-export function useFloorDraft(establishmentId: string) {
-  const saved = useFloorLayout(establishmentId);
-  const [draft, setDraft] = useState<LayoutDraft>(() => ({ tables: saved.tables, merges: saved.merges }));
+const toDraft = (layout: FloorLayout): LayoutDraft => ({ tables: layout.tables, merges: layout.merges });
+
+/**
+ * Edição acontece num rascunho; o atendente só vê a planta depois de "Salvar layout".
+ * `base` é a versão do servidor em que o rascunho se apoia: se outra pessoa salvar antes,
+ * a API recusa a gravação (409) em vez de sobrescrever.
+ */
+export function useFloorDraft(saved: FloorLayout) {
+  const [base, setBase] = useState(saved);
+  const [draft, setDraft] = useState<LayoutDraft>(() => toDraft(saved));
+  const [lastSaved, setLastSaved] = useState(saved);
 
   const dirty = useMemo(
-    () => JSON.stringify(draft.tables) !== JSON.stringify(saved.tables) || JSON.stringify(draft.merges) !== JSON.stringify(saved.merges),
-    [draft, saved],
+    () => JSON.stringify(draft.tables) !== JSON.stringify(base.tables) || JSON.stringify(draft.merges) !== JSON.stringify(base.merges),
+    [draft, base],
   );
 
-  const reset = useCallback(() => {
-    const latest = getFloorLayout(establishmentId);
-    setDraft({ tables: latest.tables, merges: latest.merges });
-  }, [establishmentId]);
+  // Planta atualizada no servidor (outra aba/pessoa): sem rascunho pendente, o editor acompanha.
+  if (saved !== lastSaved) {
+    setLastSaved(saved);
+    if (!dirty) {
+      setBase(saved);
+      setDraft(toDraft(saved));
+    }
+  }
+
+  const reset = useCallback((layout: FloorLayout) => {
+    setBase(layout);
+    setDraft(toDraft(layout));
+  }, []);
 
   const updateTable = useCallback((id: string, patch: Partial<FloorTable>) => {
     setDraft(prev => {
@@ -42,5 +57,5 @@ export function useFloorDraft(establishmentId: string) {
     }));
   }, []);
 
-  return { draft, setDraft, dirty, reset, updateTable, removeTable };
+  return { draft, setDraft, dirty, baseVersion: base.version, reset, updateTable, removeTable };
 }

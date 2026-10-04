@@ -1,11 +1,10 @@
-import { useMemo } from 'react';
-import { toggleFavorite } from '@/services/authService';
+import { toggleFavorite, useFavoriteIds } from '@/services/accountExtrasService';
 import { useClient } from '../clientContext';
 
-/** Favoritos ficam na conta; visitante é convidado a entrar (ficha 45). */
+/** Favoritos da conta (ficha 45, Sprint 2 — guardados no navegador até ganharem API). */
 export function useFavorites() {
   const { account, showToast } = useClient();
-  const favoriteIds = useMemo(() => new Set(account?.favoriteEstablishmentIds ?? []), [account]);
+  const favoriteIds = useFavoriteIds(account?.id ?? null);
 
   function toggle(establishmentId: string) {
     if (!account) {

@@ -1,33 +1,54 @@
 import { useEffect, useState } from 'react';
 import { Fingerprint } from 'lucide-react';
+import type { OtpChannel } from '@filafacil/shared';
 import { BrandBadge } from '@/components/brand/Logo';
+import { errorMessage, isApiError } from '@/lib/api/client';
 import { formatPhone, isValidEmail, isValidPhone, onlyDigits } from '@/lib/validation';
-import {
-  findAccountByPhone, loginWithBiometrics, loginWithEmail, loginWithPhone, loginWithProvider,
-  loginWithVerifiedEmail, markContactVerified, useDevice, useRememberedAccount,
-} from '@/services/authService';
+import { markContactVerified, useDevice } from '@/services/accountExtrasService';
+import { loginWithEmail, requestLoginCode, startProviderLogin, useAuthProviders, verifyLoginCode } from '@/services/authService';
 import { isBiometricAvailable, requestBiometricAuth } from '@/services/deviceService';
 import { useClient } from '../clientContext';
 import { BackButton } from '../components/Layout';
 import { LoadingButton, PasswordField, SocialButton, TextField } from '../components/AuthFields';
-import CodeVerification from '../components/CodeVerification';
+import CodeVerification, { type CodeCheck } from '../components/CodeVerification';
 
-/** Até aqui o cliente entra em poucas tentativas, por qualquer método (ficha 06). */
+const PROVIDER_LABELS = { google: 'Google', apple: 'Apple' } as const;
+
+/** Entra pelo celular (código por SMS), e-mail (senha ou código), Google ou Apple (ficha 06). */
 export function LoginScreen() {
-  const { go, finishAuth, requestVerification } = useClient();
+  const { go, finishAuth, requestVerification, showToast } = useClient();
+  const providers = useAuthProviders();
   const [step, setStep] = useState<'identify' | 'password'>('identify');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState<'continue' | 'password' | 'google' | 'apple' | 'biometric' | null>(null);
+  const [loading, setLoading] = useState<'continue' | 'password' | 'code' | 'biometric' | null>(null);
   const isPhone = /^[\d\s()+-]+$/.test(identifier) && onlyDigits(identifier).length > 3;
+
+  async function sendCode(channel: OtpChannel) {
+    setError('');
+    setLoading(channel === 'phone' ? 'continue' : 'code');
+    try {
+      const challenge = await requestLoginCode(channel, identifier);
+      requestVerification({
+        purpose: 'login',
+        channel,
+        destination: channel === 'phone' ? formatPhone(identifier) : identifier.trim(),
+        returnTo: 'login',
+        login: { challenge, rawDestination: identifier },
+      });
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setLoading(null);
+    }
+  }
 
   function handleContinue() {
     setError('');
     if (isPhone) {
       if (!isValidPhone(identifier)) return setError('Digite um celular válido com DDD.');
-      if (!findAccountByPhone(identifier)) return setError('Não encontramos uma conta com esse celular.');
-      requestVerification({ purpose: 'login', channel: 'phone', destination: formatPhone(identifier), returnTo: 'login' });
+      void sendCode('phone');
       return;
     }
     if (!isValidEmail(identifier)) return setError('Digite um e-mail ou celular válido.');
@@ -36,18 +57,21 @@ export function LoginScreen() {
 
   async function handlePasswordLogin() {
     setLoading('password');
-    const account = await loginWithEmail(identifier, password);
-    setLoading(null);
-    if (!account) return setError('E-mail ou senha incorretos.');
-    finishAuth();
+    try {
+      await loginWithEmail(identifier, password);
+      finishAuth();
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setLoading(null);
+    }
   }
 
-  async function handleProvider(provider: 'google' | 'apple') {
-    setLoading(provider);
-    const account = await loginWithProvider(provider);
-    setLoading(null);
-    if (account) finishAuth();
-    else setError(`Não foi possível entrar com ${provider === 'google' ? 'Google' : 'Apple'}. Tente novamente.`);
+  function handleProvider(provider: 'google' | 'apple') {
+    setError('');
+    // Sem credenciais OAuth no servidor, o botão avisa em vez de simular um login.
+    if (!providers.data?.[provider]) return setError(`Login com ${PROVIDER_LABELS[provider]} ainda não está disponível.`);
+    startProviderLogin(provider);
   }
 
   if (step === 'password') {
@@ -64,12 +88,9 @@ export function LoginScreen() {
           </div>
           <button onClick={() => go('forgot-password')} className="text-primary text-sm font-medium text-left">Esqueci minha senha</button>
           <div className="flex flex-col gap-3 mt-auto">
-            <LoadingButton loading={loading === 'password'} disabled={password.length < 1} onClick={handlePasswordLogin}>Entrar</LoadingButton>
-            <button
-              onClick={() => requestVerification({ purpose: 'login', channel: 'email', destination: identifier.trim(), returnTo: 'login' })}
-              className="text-center text-sm text-muted-foreground"
-            >
-              Entrar usando código por e-mail
+            <LoadingButton loading={loading === 'password'} disabled={password.length < 1} onClick={() => void handlePasswordLogin()}>Entrar</LoadingButton>
+            <button onClick={() => void sendCode('email')} disabled={loading !== null} className="text-center text-sm text-muted-foreground disabled:opacity-50">
+              {loading === 'code' ? 'Enviando código…' : 'Entrar usando código por e-mail'}
             </button>
           </div>
         </div>
@@ -90,11 +111,14 @@ export function LoginScreen() {
           <p className="text-muted-foreground text-sm mt-1">Continue de onde parou e acompanhe seus pedidos.</p>
         </div>
 
-        <BiometricLoginButton loading={loading === 'biometric'} onStart={() => setLoading('biometric')} onFinish={success => {
-          setLoading(null);
-          if (success) finishAuth();
-          else setError('Não foi possível ler a biometria. Tente de novo ou entre com celular/e-mail.');
-        }} />
+        <BiometricLoginButton
+          loading={loading === 'biometric'}
+          onStart={() => setLoading('biometric')}
+          onFinish={() => {
+            setLoading(null);
+            showToast('O login por biometria chega com o backend da Sprint 2. Entre com celular ou e-mail.');
+          }}
+        />
 
         <TextField
           label="Celular ou e-mail"
@@ -106,14 +130,14 @@ export function LoginScreen() {
         />
 
         <div className="flex flex-col gap-3 mt-auto">
-          <LoadingButton disabled={!identifier.trim()} onClick={handleContinue}>Continuar</LoadingButton>
+          <LoadingButton loading={loading === 'continue'} disabled={!identifier.trim()} onClick={handleContinue}>Continuar</LoadingButton>
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-border" />
             <span className="text-xs text-muted-foreground">ou</span>
             <div className="flex-1 h-px bg-border" />
           </div>
-          <SocialButton provider="google" loading={loading === 'google'} onClick={() => handleProvider('google')} />
-          <SocialButton provider="apple" loading={loading === 'apple'} onClick={() => handleProvider('apple')} />
+          <SocialButton provider="google" loading={false} onClick={() => handleProvider('google')} />
+          <SocialButton provider="apple" loading={false} onClick={() => handleProvider('apple')} />
           <p className="text-center text-sm text-muted-foreground">
             Não tem uma conta?{' '}
             <button onClick={() => go('signup-name')} className="text-foreground font-semibold underline underline-offset-2">Criar conta</button>
@@ -124,10 +148,12 @@ export function LoginScreen() {
   );
 }
 
-/** Atalho opcional: aparece só se a biometria foi ativada no perfil deste aparelho (ficha 59). */
-function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean; onStart: () => void; onFinish: (success: boolean) => void }) {
-  const { biometricAccountId } = useDevice();
-  const remembered = useRememberedAccount();
+/**
+ * Atalho opcional (ficha 59, Sprint 2): aparece se a biometria foi ativada neste aparelho.
+ * Abrir sessão por biometria exige WebAuthn no servidor, que ainda não existe.
+ */
+function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean; onStart: () => void; onFinish: () => void }) {
+  const { biometricUserId } = useDevice();
   const [available, setAvailable] = useState(false);
 
   useEffect(() => {
@@ -136,17 +162,17 @@ function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean
     return () => { active = false; };
   }, []);
 
-  if (!available || !biometricAccountId || remembered?.id !== biometricAccountId) return null;
+  if (!available || !biometricUserId) return null;
 
   async function authenticate() {
     onStart();
-    const ok = await requestBiometricAuth();
-    onFinish(ok && loginWithBiometrics() !== null);
+    await requestBiometricAuth();
+    onFinish();
   }
 
   return (
     <button
-      onClick={authenticate}
+      onClick={() => void authenticate()}
       disabled={loading}
       className="w-full flex items-center gap-4 bg-card border border-primary/30 rounded-xl px-4 py-4 text-left disabled:opacity-60"
     >
@@ -155,7 +181,7 @@ function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-display font-semibold text-foreground text-sm">{loading ? 'Aguardando biometria…' : 'Entrar com biometria'}</p>
-        <p className="text-xs text-muted-foreground mt-0.5 truncate">{remembered.name}</p>
+        <p className="text-xs text-muted-foreground mt-0.5 truncate">Atalho deste aparelho</p>
       </div>
     </button>
   );
@@ -163,21 +189,39 @@ function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean
 
 export function VerifyCodeScreen() {
   const { go, verification, account, finishAuth, showToast } = useClient();
+  const [challengeId, setChallengeId] = useState(verification?.login?.challenge.challengeId ?? '');
   if (!verification) return null;
-  const { purpose, channel, destination, returnTo } = verification;
+  const { purpose, channel, destination, returnTo, login } = verification;
   const channelLabel = channel === 'email' ? 'e-mail' : 'celular';
+
+  /** Login por código: o servidor confere, consome o código e abre a sessão. */
+  async function verifyLogin(code: string): Promise<CodeCheck> {
+    try {
+      await verifyLoginCode(challengeId, code);
+      return 'ok';
+    } catch (error) {
+      if (isApiError(error, 'OTP_TOO_MANY_ATTEMPTS')) return 'too-many';
+      if (isApiError(error, 'OTP_INVALID')) return 'invalid';
+      throw error;
+    }
+  }
+
+  async function resendLogin() {
+    if (!login) return;
+    try {
+      setChallengeId((await requestLoginCode(channel, login.rawDestination)).challengeId);
+    } catch (error) {
+      throw new Error(errorMessage(error), { cause: error });
+    }
+  }
 
   function handleVerified() {
     if (purpose === 'login') {
-      const loggedIn = channel === 'phone' ? loginWithPhone(destination) : loginWithVerifiedEmail(destination);
-      if (loggedIn) finishAuth();
-      else {
-        showToast('Conta não encontrada');
-        go('login');
-      }
+      finishAuth();
       return;
     }
-    if (account) markContactVerified(account.id, channel);
+    // Confirmação de contato (ficha 65) ainda é simulada no navegador.
+    if (account) markContactVerified(account, channel);
     showToast(`${channel === 'email' ? 'E-mail' : 'Celular'} verificado`);
     go(returnTo);
   }
@@ -196,7 +240,18 @@ export function VerifyCodeScreen() {
             A confirmação protege sua conta e libera o pagamento pelo app.
           </p>
         )}
-        <CodeVerification destination={destination} onVerified={handleVerified} onChangeDestination={purpose === 'login' ? () => go('login') : undefined} />
+        {purpose === 'login' ? (
+          <CodeVerification
+            destination={destination}
+            onVerified={handleVerified}
+            onChangeDestination={() => go('login')}
+            verify={verifyLogin}
+            resend={resendLogin}
+            devHint="o código aparece no terminal da API (provider de SMS/e-mail de desenvolvimento)."
+          />
+        ) : (
+          <CodeVerification destination={destination} onVerified={handleVerified} />
+        )}
         {purpose !== 'login' && (
           <button onClick={() => go(returnTo)} className="text-muted-foreground text-sm mt-2 self-start">
             Fazer isso depois

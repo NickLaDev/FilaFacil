@@ -1,10 +1,8 @@
 import { useState } from 'react';
 import { Loader2, MapPin, Navigation } from 'lucide-react';
-import { requestDeviceLocation, setManualLocation } from '@/services/deviceService';
+import { findRegions, requestDeviceLocation, setManualLocation, type KNOWN_REGIONS } from '@/services/deviceService';
 import { useClient } from '../clientContext';
 import { BackButton } from '../components/Layout';
-
-const SUGGESTIONS = ['Barão Geraldo, Campinas', 'Cidade Universitária', 'Centro, Campinas'];
 
 /** Geolocalização do usuário ou região manual para a busca por proximidade (ficha 11). */
 export default function LocationScreen() {
@@ -27,8 +25,12 @@ export default function LocationScreen() {
     setManual(true);
   }
 
-  function confirmManual(label: string) {
-    setManualLocation(label.trim());
+  // Sem serviço de geocodificação, a região manual é escolhida entre as cadastradas (com coordenadas).
+  const suggestions = findRegions(manualInput);
+
+  function confirmManual(region: (typeof KNOWN_REGIONS)[number] | undefined) {
+    if (!region) return setNotice('Escolha uma das regiões da lista.');
+    setManualLocation(region);
     showToast('Região atualizada');
     go('explore');
   }
@@ -42,7 +44,7 @@ export default function LocationScreen() {
         <div className="flex-1 flex flex-col px-6 py-6 gap-5">
           <div>
             <h1 className="font-display font-bold text-foreground text-2xl">Qual é a sua região?</h1>
-            <p className="text-muted-foreground text-sm mt-1">Digite seu bairro, cidade ou endereço</p>
+            <p className="text-muted-foreground text-sm mt-1">Digite seu bairro ou cidade e escolha na lista</p>
           </div>
           {notice && <p className="text-sm text-warning bg-warning-bg rounded-xl px-4 py-3">{notice}</p>}
           <input
@@ -53,16 +55,17 @@ export default function LocationScreen() {
             className="w-full bg-card border border-border rounded-xl px-4 py-3.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             autoFocus
           />
-          {SUGGESTIONS.map(suggestion => (
-            <button key={suggestion} onClick={() => confirmManual(suggestion)} className="flex items-center gap-3 text-left px-1 py-1">
+          {suggestions.map(region => (
+            <button key={region.label} onClick={() => confirmManual(region)} className="flex items-center gap-3 text-left px-1 py-1">
               <MapPin size={15} className="text-muted-foreground flex-shrink-0" />
-              <span className="text-sm text-foreground">{suggestion}</span>
+              <span className="text-sm text-foreground">{region.label}</span>
             </button>
           ))}
+          {suggestions.length === 0 && <p className="text-sm text-muted-foreground px-1">Nenhuma região encontrada com esse nome.</p>}
           <div className="mt-auto">
             <button
-              onClick={() => confirmManual(manualInput)}
-              disabled={!manualInput.trim()}
+              onClick={() => confirmManual(suggestions[0])}
+              disabled={suggestions.length === 0}
               className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl disabled:opacity-50"
             >
               Confirmar

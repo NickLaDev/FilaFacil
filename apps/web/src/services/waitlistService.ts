@@ -1,72 +1,73 @@
-import { useMemo } from 'react';
-import { createPersistentStore, useStore } from '@/lib/store';
-import { createId } from '@/lib/utils';
-import { WAITLIST } from '@/data/operations';
-import type { FloorTable } from '@/types/floor';
-import type { WaitlistEntry } from '@/types/waitlist';
-import { setTableLiveState } from './floorService';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { REALTIME_EVENTS, type ReleaseTablesResponse, type WaitlistDto, type WaitlistEntryDto } from '@filafacil/shared';
+import { api } from '@/lib/api/client';
+import { queryClient } from '@/lib/api/queryClient';
+import { useRealtime } from '@/lib/realtime';
+import { clearLocalTableStates } from './floorService';
+import { staffKeys } from './staffKeys';
 
-const waitlistStore = createPersistentStore('waitlist', WAITLIST);
+const base = (establishmentId: string) => `/establishments/${establishmentId}/waitlist`;
 
-/** Tempo médio para uma mesa compatível vagar — base da estimativa enquanto não há histórico real. */
-const AVERAGE_TABLE_TURNOVER_MIN = 12;
+function refresh(establishmentId: string) {
+  void queryClient.invalidateQueries({ queryKey: staffKeys.waitlist(establishmentId) });
+}
 
-/** A ordem do array é a ordem da fila. */
+/** Ficha 21: fila com posição e estimativa calculadas no servidor, sincronizada entre aparelhos. */
 export function useWaitlist(establishmentId: string) {
-  const entries = useStore(waitlistStore);
-  return useMemo(() => entries.filter(e => e.establishmentId === establishmentId), [entries, establishmentId]);
-}
-
-export function addToWaitlist(establishmentId: string, input: Pick<WaitlistEntry, 'name' | 'phone' | 'partySize'>) {
-  const entry: WaitlistEntry = {
-    ...input,
-    id: createId('wait'),
-    establishmentId,
-    joinedAt: new Date().toISOString(),
-    status: 'waiting',
-  };
-  waitlistStore.set(prev => [...prev, entry]);
-}
-
-export function removeFromWaitlist(id: string) {
-  waitlistStore.set(prev => prev.filter(e => e.id !== id));
-}
-
-export function moveInWaitlist(id: string, direction: -1 | 1) {
-  waitlistStore.set(prev => {
-    const entry = prev.find(e => e.id === id);
-    if (!entry) return prev;
-    const sameQueue = prev.filter(e => e.establishmentId === entry.establishmentId);
-    const position = sameQueue.indexOf(entry);
-    const neighbor = sameQueue[position + direction];
-    if (!neighbor) return prev;
-    const next = [...prev];
-    next[prev.indexOf(entry)] = neighbor;
-    next[prev.indexOf(neighbor)] = entry;
-    return next;
+  const client = useQueryClient();
+  useRealtime({ establishmentId }, [REALTIME_EVENTS.waitlistUpdated, REALTIME_EVENTS.floorPlanUpdated], () => {
+    void client.invalidateQueries({ queryKey: staffKeys.waitlist(establishmentId) });
   });
+  return useQuery({ queryKey: staffKeys.waitlist(establishmentId), queryFn: ({ signal }) => api.get<WaitlistDto>(base(establishmentId), undefined, signal) });
 }
 
-/** Em produção dispara SMS/push pelo backend; aqui só registra o aviso. */
-export function notifyParty(id: string, tableLabel?: string) {
-  waitlistStore.set(prev =>
-    prev.map(e => (e.id === id ? { ...e, status: 'notified', notifiedAt: new Date().toISOString(), notifiedTableLabel: tableLabel } : e)),
-  );
+export async function addToWaitlist(establishmentId: string, input: { name: string; phone: string; partySize: number }) {
+  try {
+    return await api.post<WaitlistEntryDto>(base(establishmentId), input);
+  } finally {
+    refresh(establishmentId);
+  }
 }
 
-/** Grupos à frente consomem as mesas livres compatíveis; o restante espera o giro médio. */
-export function estimateWaitMinutes(groupsAhead: number, freeCompatibleTables: number) {
-  if (groupsAhead < freeCompatibleTables) return 0;
-  return (groupsAhead - freeCompatibleTables + 1) * AVERAGE_TABLE_TURNOVER_MIN;
+export async function moveInWaitlist(establishmentId: string, entryId: string, position: number) {
+  const list = await api.patch<WaitlistDto>(`${base(establishmentId)}/${entryId}/position`, { position });
+  queryClient.setQueryData(staffKeys.waitlist(establishmentId), list);
+  return list;
 }
 
-/** Libera a mesa e avisa automaticamente o primeiro grupo que cabe nela (ficha 21). */
-export function releaseTable(establishmentId: string, table: FloorTable, capacity = table.capacity) {
-  setTableLiveState(table.id, { status: 'free', people: 0 });
-  const next = waitlistStore
-    .get()
-    .find(e => e.establishmentId === establishmentId && e.status === 'waiting' && e.partySize <= capacity);
-  if (!next) return null;
-  notifyParty(next.id, table.label);
-  return next;
+export async function notifyParty(establishmentId: string, entryId: string) {
+  try {
+    return await api.post<WaitlistEntryDto>(`${base(establishmentId)}/${entryId}/notify`);
+  } finally {
+    refresh(establishmentId);
+  }
+}
+
+export async function seatParty(establishmentId: string, entryId: string) {
+  try {
+    await api.post(`${base(establishmentId)}/${entryId}/seat`);
+  } finally {
+    refresh(establishmentId);
+    void queryClient.invalidateQueries({ queryKey: staffKeys.floor(establishmentId) });
+  }
+}
+
+export async function removeFromWaitlist(establishmentId: string, entryId: string) {
+  try {
+    await api.delete(`${base(establishmentId)}/${entryId}`);
+  } finally {
+    refresh(establishmentId);
+  }
+}
+
+/** Libera mesa(s) e o servidor avisa na hora o primeiro grupo da fila que cabe nelas. */
+export async function releaseTables(establishmentId: string, tableIds: string[]) {
+  try {
+    const result = await api.post<ReleaseTablesResponse>(`/establishments/${establishmentId}/floor-plan/tables/release`, { tableIds });
+    clearLocalTableStates(tableIds);
+    return result.notifiedEntry;
+  } finally {
+    refresh(establishmentId);
+    void queryClient.invalidateQueries({ queryKey: staffKeys.floor(establishmentId) });
+  }
 }

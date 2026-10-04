@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Establishment } from '@/types/establishment';
+import type { ManagerUnit } from '../types';
 
 interface UnitSelectorProps {
-  units: Establishment[];
+  units: ManagerUnit[];
   activeId: string;
   onSelect: (id: string) => void;
 }
@@ -42,7 +42,7 @@ export default function UnitSelector({ units, activeId, onSelect }: UnitSelector
               <div className={cn('w-2 h-2 rounded-full flex-shrink-0', unit.status === 'active' ? 'bg-success' : 'bg-muted-foreground')} />
               <div className="flex-1 min-w-0">
                 <p className="text-white text-xs font-medium leading-tight truncate">{unit.name}</p>
-                <p className="text-white/40 text-[10px] truncate">{unit.status === 'active' ? unit.address : 'Inativa'}</p>
+                <p className="text-white/40 text-[10px] truncate">{unit.status === 'active' ? unit.address : unit.status === 'suspended' ? 'Suspensa' : 'Inativa'}</p>
               </div>
               {unit.id === activeId && <Check size={11} className="text-primary flex-shrink-0" />}
             </button>

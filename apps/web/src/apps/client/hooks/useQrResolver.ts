@@ -1,41 +1,42 @@
 import { useState } from 'react';
 import { findTableByQrCode } from '@/services/floorService';
-import { canAcceptOrders, getEstablishment, isPubliclyVisible } from '@/services/establishmentService';
+import { fetchRestaurant } from '@/services/restaurantService';
 import { useClient } from '../clientContext';
 import type { TableContext } from '../types';
 
 /**
  * Converte o código lido/digitado em mesa + estabelecimento e decide o próximo passo:
- * QR inválido, estabelecimento fechado ou confirmação da mesa (ficha 02).
+ * QR inválido, estabelecimento fechado ou confirmação da mesa (ficha 02, Sprint 2). O código é
+ * resolvido localmente (ainda sem API de QR); o estabelecimento vem da API, com status real.
  */
 export function useQrResolver() {
   const { go, setTable, cart, cartEstablishmentId, clearCart } = useClient();
   const [pendingSwitch, setPendingSwitch] = useState<TableContext | null>(null);
 
-  function enterTable(table: TableContext) {
-    const establishment = getEstablishment(table.establishmentId);
+  async function enterTable(table: TableContext) {
+    const establishment = await fetchRestaurant(table.establishmentId).catch(() => null);
     setTable(table);
-    go(establishment && canAcceptOrders(establishment) ? 'bar-confirm' : 'bar-closed');
+    go(establishment?.acceptingOrders ? 'bar-confirm' : 'bar-closed');
   }
 
-  /** Retorna `false` quando o código não existe (a tela decide como mostrar o erro). */
-  function resolve(code: string, { invalidScreen = true } = {}) {
+  /** Resolve `false` quando o código não existe (a tela decide como mostrar o erro). */
+  async function resolve(code: string, { invalidScreen = true } = {}) {
     const match = findTableByQrCode(code);
-    const establishment = match ? getEstablishment(match.establishmentId) : null;
-    if (!match || !establishment || !isPubliclyVisible(establishment)) {
+    const establishment = match ? await fetchRestaurant(match.establishmentId).catch(() => null) : null;
+    if (!match || !establishment) {
       if (invalidScreen) go('qr-invalid');
       return false;
     }
     const table = { establishmentId: establishment.id, tableId: match.table.id, tableLabel: match.table.label };
     if (cart.length > 0 && cartEstablishmentId !== establishment.id) setPendingSwitch(table);
-    else enterTable(table);
+    else await enterTable(table);
     return true;
   }
 
   function confirmSwitch() {
     if (!pendingSwitch) return;
     clearCart();
-    enterTable(pendingSwitch);
+    void enterTable(pendingSwitch);
     setPendingSwitch(null);
   }
 

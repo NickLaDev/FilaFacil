@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { AlertTriangle, Edit3, FileText, Plus, Trash2, X } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { cn, formatCurrency } from '@/lib/utils';
-import { calculateRecipeCost, costPercentOfPrice, deleteRecipe } from '@/services/recipeService';
-import type { Ingredient, MenuItem, Recipe } from '@/types/catalog';
+import type { TechnicalSheetDto } from '@filafacil/shared';
+import { useAsyncAction } from '@/lib/useAsyncAction';
+import type { MenuItemView } from '@/services/menuService';
+import { deleteTechnicalSheet, type IngredientView } from '@/services/recipeService';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import RecipeEditorModal from './RecipeEditorModal';
 import { formatPercent, formatQuantity } from './recipeFormat';
@@ -11,31 +13,31 @@ import { formatPercent, formatQuantity } from './recipeFormat';
 const ALL_CATEGORIES = 'all';
 
 interface Props {
-  items: MenuItem[];
-  recipes: Recipe[];
-  ingredients: Ingredient[];
+  establishmentId: string;
+  items: MenuItemView[];
+  sheets: TechnicalSheetDto[];
+  ingredients: IngredientView[];
   notify: (message: string) => void;
 }
 
-export default function RecipesTab({ items, recipes, ingredients, notify }: Props) {
+export default function RecipesTab({ establishmentId, items, sheets, ingredients, notify }: Props) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Recipe | 'new' | null>(null);
-  const [deleting, setDeleting] = useState<Recipe | null>(null);
+  const [editing, setEditing] = useState<TechnicalSheetDto | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<TechnicalSheetDto | null>(null);
+  const { run } = useAsyncAction(notify);
 
-  const rows = recipes.flatMap(recipe => {
+  // Custo, % e alerta vêm calculados do servidor (com o custo atual dos insumos).
+  const rows = sheets.flatMap(recipe => {
     const item = items.find(i => i.id === recipe.menuItemId);
     if (!item) return [];
-    const cost = calculateRecipeCost(recipe, ingredients);
-    const percent = costPercentOfPrice(cost, item.price);
-    return [{ recipe, item, cost, percent, overLimit: percent > recipe.costLimitPercent }];
+    return [{ recipe, item, cost: Number(recipe.totalCost), percent: recipe.costPercent, overLimit: recipe.overLimit }];
   });
   const categories = [ALL_CATEGORIES, ...new Set(rows.map(r => r.item.category))];
   const filtered = category === ALL_CATEGORIES ? rows : rows.filter(r => r.item.category === category);
   const overLimit = rows.filter(r => r.overLimit);
   const selected = rows.find(r => r.recipe.id === selectedId) ?? null;
-  const itemsWithoutRecipe = items.filter(i => !recipes.some(r => r.menuItemId === i.id));
-  const ingredientById = new Map(ingredients.map(i => [i.id, i]));
+  const itemsWithoutRecipe = items.filter(i => !sheets.some(r => r.menuItemId === i.id));
 
   return (
     <div className="flex flex-col gap-4">
@@ -128,19 +130,17 @@ export default function RecipesTab({ items, recipes, ingredients, notify }: Prop
                 </button>
               </div>
               <div className="flex flex-col gap-2 mb-4">
-                {selected.recipe.lines.map(line => {
-                  const ingredient = ingredientById.get(line.ingredientId);
-                  if (!ingredient) return null;
-                  return (
-                    <div key={line.ingredientId} className="flex items-center justify-between text-sm py-2 border-b border-border last:border-0">
-                      <span className="text-foreground">{ingredient.name}</span>
-                      <div className="text-right">
-                        <p className="text-muted-foreground text-xs">{formatQuantity(line.quantity)} {ingredient.unit}</p>
-                        <p className="text-foreground font-medium">{formatCurrency(ingredient.unitCost * line.quantity)}</p>
-                      </div>
+                {selected.recipe.lines.map(line => (
+                  <div key={line.ingredientId} className="flex items-center justify-between text-sm py-2 border-b border-border last:border-0">
+                    <span className="text-foreground">{line.ingredientName}</span>
+                    <div className="text-right">
+                      <p className="text-muted-foreground text-xs">
+                        {formatQuantity(Number(line.quantity))} {line.unit}
+                      </p>
+                      <p className="text-foreground font-medium">{formatCurrency(Number(line.lineCost))}</p>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
               <div className="bg-muted rounded-lg p-3 flex flex-col gap-1.5">
                 <div className="flex justify-between text-sm">
@@ -176,11 +176,12 @@ export default function RecipesTab({ items, recipes, ingredients, notify }: Prop
 
       {editing && (
         <RecipeEditorModal
+          establishmentId={establishmentId}
           recipe={editing === 'new' ? undefined : editing}
           items={editing === 'new' ? itemsWithoutRecipe : items}
           ingredients={ingredients}
+          notify={notify}
           onClose={() => setEditing(null)}
-          onSaved={notify}
         />
       )}
       {deleting && (
@@ -188,10 +189,9 @@ export default function RecipesTab({ items, recipes, ingredients, notify }: Prop
           title="Excluir ficha técnica"
           message="O item continua no cardápio; só a ficha de custo é removida."
           confirmLabel="Excluir ficha"
-          onConfirm={() => {
-            deleteRecipe(deleting.id);
+          onConfirm={async () => {
+            await run(() => deleteTechnicalSheet(establishmentId, deleting.menuItemId), 'Ficha técnica excluída');
             setSelectedId(null);
-            notify('Ficha técnica excluída');
           }}
           onClose={() => setDeleting(null)}
         />

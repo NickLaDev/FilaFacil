@@ -1,19 +1,26 @@
 import { useMemo, useState } from 'react';
-import { BookOpen, History, Search, X } from 'lucide-react';
+import { BookOpen, History, ImageOff, Search, X } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import Toggle from '@/components/ui/Toggle';
+import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, formatDateTime } from '@/lib/utils';
 import { getCategories, setItemAvailability, useAvailabilityLog, useMenuItems } from '@/services/menuService';
 
 interface Props {
   establishmentId: string;
-  actorName: string;
+  notify: (message: string) => void;
 }
 
-/** Ficha 19: item esgotado some do cardápio do cliente e cada mudança fica no histórico. */
-export default function MenuAvailabilitySection({ establishmentId, actorName }: Props) {
-  const items = useMenuItems(establishmentId);
-  const log = useAvailabilityLog(establishmentId);
+/**
+ * Ficha 19: item esgotado some do cardápio do cliente em segundos (WebSocket) e cada mudança
+ * fica no histórico do servidor, com quem alterou e quando.
+ */
+export default function MenuAvailabilitySection({ establishmentId, notify }: Props) {
+  const query = useMenuItems(establishmentId);
+  const items = useMemo(() => query.data ?? [], [query.data]);
+  const log = useAvailabilityLog(establishmentId).data?.items ?? [];
+  const { run } = useAsyncAction(notify);
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
@@ -22,6 +29,9 @@ export default function MenuAvailabilitySection({ establishmentId, actorName }: 
   }, [items, search]);
   const categories = getCategories(filtered);
   const unavailableCount = items.filter(i => !i.available).length;
+
+  if (query.error) return <ErrorBlock error={query.error} onRetry={() => void query.refetch()} className="flex-1 py-16" />;
+  if (!query.data) return <LoadingBlock className="flex-1 py-16" />;
 
   return (
     <div className="flex-1 overflow-auto p-5">
@@ -64,7 +74,13 @@ export default function MenuAvailabilitySection({ establishmentId, actorName }: 
                       .map(item => (
                         <div key={item.id} className="bg-card rounded-xl border border-border px-4 py-3.5 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
-                            <img src={item.image} alt="" className={cn('w-10 h-10 rounded-lg object-cover bg-muted flex-shrink-0', !item.available && 'grayscale')} />
+                            {item.image ? (
+                              <img src={item.image} alt="" className={cn('w-10 h-10 rounded-lg object-cover bg-muted flex-shrink-0', !item.available && 'grayscale')} />
+                            ) : (
+                              <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                                <ImageOff size={14} className="text-muted-foreground" />
+                              </div>
+                            )}
                             <p className="font-medium text-foreground text-sm truncate">{item.name}</p>
                           </div>
                           <div className="flex items-center gap-3 flex-shrink-0">
@@ -73,7 +89,9 @@ export default function MenuAvailabilitySection({ establishmentId, actorName }: 
                             </span>
                             <Toggle
                               checked={item.available}
-                              onChange={available => setItemAvailability(item.id, available, actorName)}
+                              onChange={available =>
+                                void run(() => setItemAvailability(establishmentId, item.id, available), `${item.name} ${available ? 'disponível de novo' : 'marcado como esgotado'}`)
+                              }
                               label={`${item.name}: ${item.available ? 'marcar como esgotado' : 'reativar'}`}
                               tone="success"
                             />
@@ -105,7 +123,7 @@ export default function MenuAvailabilitySection({ establishmentId, actorName }: 
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {entry.actor} · {formatDateTime(Date.parse(entry.at))}
+                    {entry.actorName} · {formatDateTime(entry.createdAt)}
                   </p>
                 </li>
               ))}

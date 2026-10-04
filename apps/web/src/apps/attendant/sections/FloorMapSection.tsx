@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ChevronRight, Map as MapIcon, Users } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import FloorCanvas, { MergeBlock, TableNode } from '@/components/floor/FloorCanvas';
 import { buildFloorUnits, unitLiveState, type FloorUnit } from '@/components/floor/floorUnits';
 import { LIVE_STATUS_STYLE, shortTableLabel } from '@/components/floor/tableStyles';
@@ -10,13 +11,16 @@ import type { TableLiveState, TableLiveStatus } from '@/types/floor';
 
 const LEGEND_ORDER: TableLiveStatus[] = ['free', 'occupied', 'reserved', 'called'];
 
-/** Ficha 16: grade visual por status, montada a partir da planta salva pelo gestor. */
+/**
+ * Ficha 16 (Sprint 2): grade visual por status. A planta vem do servidor — a mesma salva pelo
+ * gestor (ficha 20) —, então uma mesa reposicionada aparece aqui sem reconfiguração.
+ */
 export default function FloorMapSection({ establishmentId }: { establishmentId: string }) {
-  const layout = useFloorLayout(establishmentId);
-  const liveStates = useTableLiveStates();
+  const { layout, error, refetch } = useFloorLayout(establishmentId);
+  const liveStates = useTableLiveStates(establishmentId);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
-  const units = useMemo(() => buildFloorUnits(layout), [layout]);
+  const units = useMemo(() => (layout ? buildFloorUnits(layout) : []), [layout]);
   const selected = units.find(u => u.key === selectedKey) ?? null;
 
   // Conta por unidade atendida: mesas mescladas entram uma vez, com o status do grupo.
@@ -24,6 +28,9 @@ export default function FloorMapSection({ establishmentId }: { establishmentId: 
     (acc, status) => ({ ...acc, [status]: units.filter(unit => unitLiveState(unit, liveStates).status === status).length }),
     { free: 0, occupied: 0, reserved: 0, called: 0 },
   );
+
+  if (error) return <ErrorBlock error={error} onRetry={() => void refetch()} className="flex-1 py-16" />;
+  if (!layout) return <LoadingBlock className="flex-1 py-16" />;
 
   if (layout.tables.length === 0) {
     return (

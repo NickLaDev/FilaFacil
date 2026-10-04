@@ -1,17 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { AlertCircle, ChevronRight, Clock, LogOut, MapPin, QrCode, Search, Star } from 'lucide-react';
 import { cn, formatCurrency, getInitials } from '@/lib/utils';
-import { useNow } from '@/lib/hooks';
+import { imageOrPlaceholder } from '@/lib/images';
 import { BrandBadge } from '@/components/brand/Logo';
 import BottomSheet from '@/components/ui/BottomSheet';
-import { isAccountVerified } from '@/services/authService';
-import { useEstablishment, usePublicEstablishments } from '@/services/establishmentService';
+import { LoadingBlock } from '@/components/ui/QueryState';
 import { useClientLocation } from '@/services/deviceService';
-import { usePricedMenu } from '@/services/menuService';
+import { useHighlightedIds } from '@/services/menuService';
 import { ORDER_STEPS } from '@/services/orderService';
-import type { Establishment } from '@/types/establishment';
+import { useNearbyRestaurants, usePublicMenu, useRestaurantData, type Restaurant } from '@/services/restaurantService';
 import type { Order, OrderStatus } from '@/types/order';
-import { useClient } from '../clientContext';
+import { isAccountVerified, useClient } from '../clientContext';
+import { useFavorites } from '../hooks/useFavorites';
 import { useClientOrders } from '../hooks/useOrders';
 import { StatusBadge } from '../components/RestaurantCard';
 import VerificationBanner from '../components/VerificationBanner';
@@ -54,12 +54,12 @@ function ActiveOrderCard({ order, status }: { order: Order; status: OrderStatus 
 }
 
 
-function RestaurantMiniCard({ restaurant: r, onPress }: { restaurant: Establishment; onPress: () => void }) {
+function RestaurantMiniCard({ restaurant: r, onPress }: { restaurant: Restaurant; onPress: () => void }) {
   const closed = r.orderingStatus === 'closed';
   return (
     <button onClick={onPress} className={cn('flex-shrink-0 w-44 bg-card border border-border rounded-xl overflow-hidden text-left', closed && 'opacity-75')}>
       <div className="relative h-24">
-        <img src={r.images[0]} alt={r.name} className={cn('w-full h-full object-cover bg-muted', closed && 'grayscale')} />
+        <img src={imageOrPlaceholder(r.images[0])} alt={r.name} className={cn('w-full h-full object-cover bg-muted', closed && 'grayscale')} />
         {r.highDemand && !closed && (
           <span className="absolute bottom-1.5 left-1.5 text-[9px] font-bold bg-warning text-white px-1.5 py-0.5 rounded-full">Alta demanda</span>
         )}
@@ -86,13 +86,15 @@ function RestaurantMiniCard({ restaurant: r, onPress }: { restaurant: Establishm
 
 export function HomeOutOfBarScreen() {
   const { go, account, openEstablishment, openOrder } = useClient();
-  const establishments = usePublicEstablishments();
+  const restaurants = useNearbyRestaurants();
   const location = useClientLocation();
+  const { favoriteIds } = useFavorites();
   const { orders, active } = useClientOrders();
   const firstName = account?.name.split(' ')[0];
 
-  const nearby = useMemo(() => [...establishments].sort((a, b) => a.distanceM - b.distanceM), [establishments]);
-  const favorites = establishments.filter(e => account?.favoriteEstablishmentIds.includes(e.id));
+  // A API já devolve ordenado por distância (ficha 11).
+  const nearby = restaurants.data ?? [];
+  const favorites = nearby.filter(e => favoriteIds.has(e.id));
   const pastOrders = orders.filter(entry => entry.status === 'delivered').slice(0, 2);
 
   return (
@@ -148,6 +150,8 @@ export function HomeOutOfBarScreen() {
             <button onClick={() => go('explore')} className="text-primary text-xs font-medium">Ver todos</button>
           </div>
           <div className="flex gap-3 overflow-x-auto px-4 pb-1">
+            {restaurants.isPending && <LoadingBlock className="py-8 w-full" />}
+            {restaurants.data?.length === 0 && <p className="text-sm text-muted-foreground py-4">Nenhum estabelecimento por perto.</p>}
             {nearby.map(r => <RestaurantMiniCard key={r.id} restaurant={r} onPress={() => openEstablishment(r.id)} />)}
           </div>
         </div>
@@ -161,7 +165,7 @@ export function HomeOutOfBarScreen() {
             <div className="flex gap-3 overflow-x-auto px-4 pb-1">
               {favorites.map(r => (
                 <button key={r.id} onClick={() => openEstablishment(r.id)} className="flex-shrink-0 flex items-center gap-3 bg-card border border-border rounded-xl px-3 py-3 min-w-[180px]">
-                  <img src={r.images[0]} alt={r.name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 bg-muted" />
+                  <img src={imageOrPlaceholder(r.images[0])} alt={r.name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 bg-muted" />
                   <div className="min-w-0 text-left">
                     <p className="font-medium text-foreground text-xs line-clamp-1">{r.name}</p>
                     <p className="text-muted-foreground text-[10px] mt-0.5">{formatDistance(r.distanceM)}</p>
@@ -207,15 +211,16 @@ export function HomeOutOfBarScreen() {
 
 export function HomeInBarScreen() {
   const { go, account, table, setTable, clearCart, openMenu, openItem } = useClient();
-  const establishment = useEstablishment(table?.establishmentId);
-  const now = useNow(30_000);
-  const menu = usePricedMenu(table?.establishmentId ?? '', now);
+  const establishment = useRestaurantData(table?.establishmentId);
+  const menu = usePublicMenu(table?.establishmentId).data?.items ?? [];
+  const highlightedIds = useHighlightedIds();
   const { active } = useClientOrders();
   const [leaveSheet, setLeaveSheet] = useState(false);
   const firstName = account?.name.split(' ')[0];
 
-  if (!table || !establishment) return null;
-  const highlights = menu.filter(item => item.highlighted && item.available).slice(0, 4);
+  if (!table) return null;
+  if (!establishment) return <LoadingBlock className="min-h-screen" />;
+  const highlights = menu.filter(item => highlightedIds.has(item.id)).slice(0, 4);
 
   function confirmLeave() {
     setTable(null);
@@ -303,7 +308,7 @@ export function HomeInBarScreen() {
           <div className="flex gap-3 overflow-x-auto pb-1">
             {highlights.map(item => (
               <button key={item.id} onClick={() => openItem(item.id)} className="flex-shrink-0 w-28 bg-card border border-border rounded-xl overflow-hidden text-left">
-                <img src={item.image} alt={item.name} className="w-full h-20 object-cover bg-muted" />
+                <img src={imageOrPlaceholder(item.image)} alt={item.name} className="w-full h-20 object-cover bg-muted" />
                 <div className="p-2">
                   <p className="text-xs font-medium text-foreground leading-tight line-clamp-2">{item.name}</p>
                   <p className="text-xs text-primary font-bold mt-1">{formatCurrency(item.finalPrice)}</p>

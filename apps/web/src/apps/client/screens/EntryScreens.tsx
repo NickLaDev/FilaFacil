@@ -6,18 +6,20 @@ import { BrandAppIcon, BrandLogo } from '@/components/brand/Logo';
 import { useClient } from '../clientContext';
 
 export function SplashScreen() {
-  const { go, account } = useClient();
+  const { go, account, sessionLoading } = useClient();
   const [fading, setFading] = useState(false);
   const destination = account ? 'home-out-of-bar' : 'welcome';
 
   useEffect(() => {
+    // Sessão persistida (ficha 06): espera a API confirmar antes de decidir entre início e boas-vindas.
+    if (sessionLoading) return;
     const fade = setTimeout(() => setFading(true), 1400);
     const next = setTimeout(() => go(destination), 1800);
     return () => {
       clearTimeout(fade);
       clearTimeout(next);
     };
-  }, [go, destination]);
+  }, [go, destination, sessionLoading]);
 
   return (
     <div className={cn('min-h-screen flex flex-col items-center justify-center gap-6 transition-opacity duration-400 bg-foreground', fading ? 'opacity-0' : 'opacity-100')}>

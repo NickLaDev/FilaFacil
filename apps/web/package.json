@@ -11,9 +11,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@filafacil/shared": "workspace:*",
+    "@tanstack/react-query": "^5.104.1",
     "lucide-react": "^1.50.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "socket.io-client": "^4.8.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

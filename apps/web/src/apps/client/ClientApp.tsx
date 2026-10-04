@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import AccessBlocked from '@/components/layout/AccessBlocked';
 import Toast from '@/components/ui/Toast';
 import { useToast } from '@/components/ui/useToast';
-import { logout, useCurrentAccount } from '@/services/authService';
-import { useIsSuspended } from '@/services/platformUserService';
-import { ClientContext, useClient, type ClientContextValue } from './clientContext';
+import { onSessionEvent } from '@/lib/api/client';
+import { useVerifiedContacts } from '@/services/accountExtrasService';
+import { handleSessionExpired, logout, OAUTH_ERROR_MESSAGES, useMe } from '@/services/authService';
+import { ClientContext, useClient, type ClientAccount, type ClientContextValue } from './clientContext';
 import { BOTTOM_NAV_SCREENS } from './navigation';
 import BottomNav from './components/BottomNav';
 import { useClientOrders } from './hooks/useOrders';
@@ -24,7 +25,7 @@ import { OrderTrackingScreen, OrdersScreen, ReceiptScreen } from './screens/Orde
 import { AddressesScreen, EditProfileScreen, ProfileScreen } from './screens/ProfileScreens';
 import { AccountSecurityScreen, DeleteAccountScreen } from './screens/AccountScreens';
 
-const EMPTY_SIGNUP: SignupDraft = { name: '', cpf: '', email: '', phone: '' };
+const EMPTY_SIGNUP: SignupDraft = { name: '', cpf: '', email: '', phone: '', password: '' };
 const MAX_LINE_QUANTITY = 20;
 
 const SCREENS: Record<ClientScreen, () => ReactNode> = {
@@ -67,12 +68,25 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
 /** Telas que exigem conta; visitante/deslogado cai no login. */
 const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security']);
 
+/** Retorno do login com Google/Apple: a API redireciona com ?auth=success ou ?auth_error=código. */
+function readOAuthResult() {
+  const params = new URLSearchParams(window.location.search);
+  const success = params.get('auth') === 'success';
+  const error = params.get('auth_error');
+  if (success || error) window.history.replaceState(null, '', window.location.pathname);
+  return { success, error };
+}
+
 export default function ClientApp() {
-  const account = useCurrentAccount();
-  const suspended = useIsSuspended({ email: account?.email || account?.phone || '__none__' });
+  const me = useMe();
+  const user = me.data?.user ?? null;
+  const verified = useVerifiedContacts(user);
+  const account = useMemo<ClientAccount | null>(() => (user ? { ...user, ...verified } : null), [user, verified]);
+  const [suspended, setSuspended] = useState(false);
+  const [oauthResult] = useState(readOAuthResult);
   const { toastMessage, showToast } = useToast();
 
-  const [screen, setScreen] = useState<ClientScreen>('splash');
+  const [screen, setScreen] = useState<ClientScreen>(oauthResult.success ? 'home-out-of-bar' : oauthResult.error ? 'login' : 'splash');
   const [isVisitor, setIsVisitor] = useState(false);
   const [postAuthScreen, setPostAuthScreen] = useState<ClientScreen | null>(null);
   const [table, setTableState] = useState<TableContext | null>(null);
@@ -89,11 +103,33 @@ export default function ClientApp() {
     window.scrollTo(0, 0);
   }, []);
 
+  useEffect(() => {
+    if (oauthResult.error) showToast(OAUTH_ERROR_MESSAGES[oauthResult.error] ?? 'Não foi possível entrar. Tente novamente.');
+    else if (oauthResult.success) showToast('Login realizado');
+  }, [oauthResult, showToast]);
+
+  // Suspensão (ficha 36) e sessão revogada chegam pela API ou pelo WebSocket na hora.
+  useEffect(
+    () =>
+      onSessionEvent(event => {
+        if (event === 'suspended') setSuspended(true);
+        else handleSessionExpired();
+      }),
+    [],
+  );
+
+  const signOut = useCallback(async () => {
+    setSuspended(false);
+    await logout();
+  }, []);
+
   const value = useMemo<ClientContextValue>(() => ({
     screen,
     go,
     showToast,
     account,
+    sessionLoading: me.isPending,
+    signOut,
     isVisitor: isVisitor && !account,
     continueAsVisitor: destination => {
       setIsVisitor(true);
@@ -160,14 +196,14 @@ export default function ClientApp() {
     },
     signupDraft,
     setSignupDraft,
-  }), [screen, go, showToast, account, isVisitor, postAuthScreen, table, establishmentId, selectedItemId, cart, cartEstablishmentId, orderId, verification, signupDraft]);
+  }), [screen, go, showToast, account, me.isPending, signOut, isVisitor, postAuthScreen, table, establishmentId, selectedItemId, cart, cartEstablishmentId, orderId, verification, signupDraft]);
 
-  if (account && suspended) {
+  if (suspended) {
     return (
       <AccessBlocked
         title="Conta suspensa"
         description="Sua conta foi suspensa pela administração da plataforma. Fale com o suporte para mais informações."
-        action={{ label: 'Sair', onClick: () => { logout(); go('welcome'); } }}
+        action={{ label: 'Sair', onClick: () => void signOut().then(() => go('welcome')) }}
       />
     );
   }

@@ -3,6 +3,7 @@ import { Copy, Eye, QrCode } from 'lucide-react';
 import { BrandMark } from '@/components/brand/Logo';
 import EmptyState from '@/components/ui/EmptyState';
 import Modal from '@/components/ui/Modal';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { BRAND } from '@/config/brand';
 import { cn } from '@/lib/utils';
 import { useFloorLayout } from '@/services/floorService';
@@ -18,7 +19,7 @@ interface Props extends ManagerSectionProps {
 
 /** Ficha 02: cada mesa tem um código único que vincula o pedido do cliente à mesa. */
 export default function QRCodesSection({ unit, notify, onOpenFloorPlan }: Props) {
-  const layout = useFloorLayout(unit.id);
+  const { layout, error, refetch } = useFloorLayout(unit.id);
   const [preview, setPreview] = useState<FloorTable | null>(null);
 
   async function copyCode(table: FloorTable) {
@@ -29,6 +30,9 @@ export default function QRCodesSection({ unit, notify, onOpenFloorPlan }: Props)
       notify('Não foi possível copiar — selecione o código manualmente');
     }
   }
+
+  if (error) return <ErrorBlock error={error} onRetry={() => void refetch()} />;
+  if (!layout) return <LoadingBlock />;
 
   if (layout.tables.length === 0) {
     return (

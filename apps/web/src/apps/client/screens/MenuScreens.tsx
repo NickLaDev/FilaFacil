@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { ChevronLeft, Eye, Minus, Plus, Search, X } from 'lucide-react';
+import { imageOrPlaceholder } from '@/lib/images';
 import { cn, formatCurrency } from '@/lib/utils';
-import { useNow } from '@/lib/hooks';
 import EmptyState from '@/components/ui/EmptyState';
-import { canAcceptOrders, useEstablishment } from '@/services/establishmentService';
-import { getCategories, usePricedMenu, type PricedMenuItem } from '@/services/menuService';
+import { LoadingBlock } from '@/components/ui/QueryState';
+import { useHighlightedIds } from '@/services/menuService';
+import { usePublicMenu, useRestaurant, type PricedMenuItem } from '@/services/restaurantService';
 import { useClient } from '../clientContext';
 import { FixedBottom } from '../components/Layout';
+import RestaurantUnavailable from '../components/RestaurantUnavailable';
 
 const HIGHLIGHT_CATEGORY = 'Mais pedidos';
 const QUICK_NOTES = ['Sem gelo', 'Sem cebola', 'Sem pimenta', 'Bem passado', 'Ao ponto', 'Mal passado'];
@@ -14,12 +16,14 @@ const QUICK_NOTES = ['Sem gelo', 'Sem cebola', 'Sem pimenta', 'Bem passado', 'Ao
 /** Cardápio do cliente com preço promocional vigente e itens esgotados ocultos (fichas 03, 19, 29, 46). */
 function useClientMenu() {
   const { establishmentId, table } = useClient();
-  const establishment = useEstablishment(establishmentId);
-  const now = useNow(30_000);
-  // Item desativado pelo atendente some do cardápio e não pode ir ao carrinho (ficha 19).
-  const items = usePricedMenu(establishmentId ?? '', now).filter(item => item.available);
-  const canOrder = Boolean(establishment && table?.establishmentId === establishment.id && canAcceptOrders(establishment));
-  return { establishment, items, canOrder, table };
+  const restaurant = useRestaurant(establishmentId);
+  const establishment = restaurant.data ?? null;
+  // A API só devolve itens disponíveis, com o preço vigente; mudanças chegam por WebSocket (ficha 19).
+  const menu = usePublicMenu(establishmentId);
+  const items = menu.data?.items ?? [];
+  const highlightedIds = useHighlightedIds();
+  const canOrder = Boolean(establishment && table?.establishmentId === establishment.id && establishment.acceptingOrders);
+  return { establishment, items, categories: menu.data?.categories ?? [], highlightedIds, canOrder, table, error: restaurant.error ?? menu.error, retry: () => void Promise.all([restaurant.refetch(), menu.refetch()]) };
 }
 
 function PriceTag({ item, className }: { item: PricedMenuItem; className?: string }) {
@@ -33,17 +37,18 @@ function PriceTag({ item, className }: { item: PricedMenuItem; className?: strin
 
 export function MenuScreen() {
   const { go, cart, openItem } = useClient();
-  const { establishment, items, canOrder, table } = useClientMenu();
+  const { establishment, items, categories: menuCategories, highlightedIds, canOrder, table, error, retry } = useClientMenu();
   const [category, setCategory] = useState(HIGHLIGHT_CATEGORY);
   const [query, setQuery] = useState('');
 
-  if (!establishment) return null;
-  const categories = [HIGHLIGHT_CATEGORY, ...getCategories(items)];
+  if (error) return <RestaurantUnavailable error={error} onRetry={retry} onExplore={() => go('explore')} />;
+  if (!establishment) return <LoadingBlock className="min-h-screen" />;
+  const categories = [HIGHLIGHT_CATEGORY, ...menuCategories];
   const search = query.trim().toLowerCase();
   const visible = items.filter(item =>
     search
       ? `${item.name} ${item.description}`.toLowerCase().includes(search)
-      : category === HIGHLIGHT_CATEGORY ? item.highlighted : item.category === category,
+      : category === HIGHLIGHT_CATEGORY ? highlightedIds.has(item.id) : item.category === category,
   );
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const cartTotal = cart.reduce((sum, line) => sum + (items.find(i => i.id === line.itemId)?.finalPrice ?? 0) * line.quantity, 0);
@@ -118,8 +123,8 @@ export function MenuScreen() {
             className="bg-card rounded-xl border border-border flex gap-3 p-3 text-left transition-all hover:border-primary/30 active:scale-99"
           >
             <div className="relative w-24 h-24 flex-shrink-0">
-              <img src={item.image} alt={item.name} className="w-full h-full object-cover rounded-lg bg-muted" />
-              {item.highlighted && (
+              <img src={imageOrPlaceholder(item.image)} alt={item.name} className="w-full h-full object-cover rounded-lg bg-muted" />
+              {highlightedIds.has(item.id) && (
                 <span className="absolute -top-1.5 -left-1.5 bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-md">+ pedido</span>
               )}
               {item.promotion && (
@@ -163,12 +168,12 @@ export function MenuScreen() {
 
 export function ItemDetailScreen() {
   const { go, selectedItemId, addToCart, showToast } = useClient();
-  const { establishment, items, canOrder } = useClientMenu();
+  const { establishment, items, highlightedIds, canOrder } = useClientMenu();
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState('');
   const item = items.find(i => i.id === selectedItemId);
 
-  if (!establishment) return null;
+  if (!establishment) return <LoadingBlock className="min-h-screen" />;
   if (!item) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
@@ -184,7 +189,7 @@ export function ItemDetailScreen() {
 
   function handleAdd() {
     if (!item || !establishment) return;
-    addToCart(establishment.id, { itemId: item.id, quantity, notes: notes.trim() });
+    addToCart(establishment.id, { itemId: item.id, quantity, notes: notes.trim(), name: item.name, image: item.image });
     showToast('Adicionado ao pedido');
     go('menu');
   }
@@ -192,11 +197,11 @@ export function ItemDetailScreen() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="relative h-64 flex-shrink-0">
-        <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+        <img src={imageOrPlaceholder(item.image)} alt={item.name} className="w-full h-full object-cover" />
         <button onClick={() => go('menu')} className="absolute top-4 left-4 w-9 h-9 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm" aria-label="Voltar">
           <ChevronLeft size={18} className="text-white" />
         </button>
-        {item.highlighted && (
+        {highlightedIds.has(item.id) && (
           <span className="absolute top-4 right-4 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full">Mais pedido</span>
         )}
       </div>

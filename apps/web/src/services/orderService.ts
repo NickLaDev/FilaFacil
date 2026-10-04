@@ -1,12 +1,16 @@
+// Sprint 2 (pedidos, pagamento e acompanhamento): ainda simulado no navegador, sem API.
 import { useMemo } from 'react';
+import { useNow } from '@/lib/hooks';
 import { createPersistentStore, useStore } from '@/lib/store';
 import { createId } from '@/lib/utils';
 import { onlyDigits } from '@/lib/validation';
 import { ORDERS } from '@/data/operations';
 import type { Order, OrderLine, OrderStatus, PaymentMethod } from '@/types/order';
-import { getTableLiveState, getTableLiveStates, setTableLiveState } from './floorService';
+import { occupyTableLocally } from './floorService';
 
-const ordersStore = createPersistentStore('orders', ORDERS);
+const ordersStore = createPersistentStore('orders-v2', ORDERS);
+const DAY_MS = 24 * 60 * 60 * 1000;
+const POPULARITY_WINDOW_MS = 30 * DAY_MS;
 
 export const ORDER_STEPS: { status: OrderStatus; label: string }[] = [
   { status: 'received', label: 'Pedido recebido' },
@@ -82,15 +86,23 @@ export function placeOrder(input: PlaceOrderInput): Order {
     createdAt: new Date().toISOString(),
   };
   ordersStore.set(prev => [...prev, order]);
-  if (input.table) occupyTable(input.table.id);
+  // Pedido vinculado à mesa marca a mesa como ocupada no mapa do atendente (ficha 16).
+  if (input.table) occupyTableLocally(input.table.id);
   return order;
 }
 
-/** Pedido vinculado à mesa marca a mesa como ocupada no mapa do atendente (ficha 16). */
-function occupyTable(tableId: string) {
-  const current = getTableLiveState(getTableLiveStates(), tableId);
-  if (current.status === 'occupied' || current.status === 'called') return;
-  setTableLiveState(tableId, { status: 'occupied', people: Math.max(current.people, 1), since: new Date().toISOString() });
+/** Quantidade pedida por item nos últimos 30 dias — base do selo "+ pedido" (ficha 46). */
+export function useItemOrderCounts() {
+  const orders = useStore(ordersStore);
+  const now = useNow(60 * 60 * 1000);
+  return useMemo(() => {
+    const since = now - POPULARITY_WINDOW_MS;
+    const counts = new Map<string, number>();
+    orders
+      .filter(order => Date.parse(order.createdAt) >= since)
+      .forEach(order => order.lines.forEach(line => counts.set(line.menuItemId, (counts.get(line.menuItemId) ?? 0) + line.quantity)));
+    return counts;
+  }, [orders, now]);
 }
 
 // ─── Pagamento (gateway simulado) ───────────────────────────────────────────

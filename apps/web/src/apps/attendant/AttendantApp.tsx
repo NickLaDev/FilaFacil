@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { BookOpen, Map as MapIcon } from 'lucide-react';
+import { BookOpen, LogOut, Map as MapIcon } from 'lucide-react';
+import type { MeResponse, OrderingStatus } from '@filafacil/shared';
 import AccessBlocked from '@/components/layout/AccessBlocked';
+import StaffGate from '@/components/layout/StaffGate';
+import Toast from '@/components/ui/Toast';
+import { useToast } from '@/components/ui/useToast';
 import { BRAND } from '@/config/brand';
-import { CURRENT_STAFF_USER_ID } from '@/data/users';
 import { cn, getInitials } from '@/lib/utils';
-import { useEstablishment } from '@/services/establishmentService';
-import { useIsSuspended, usePlatformUser } from '@/services/platformUserService';
-import type { OrderingStatus } from '@/types/establishment';
+import { logout } from '@/services/authService';
+import { useRestaurant } from '@/services/restaurantService';
 import FloorMapSection from './sections/FloorMapSection';
 import MenuAvailabilitySection from './sections/MenuAvailabilitySection';
 
@@ -24,20 +26,43 @@ const ORDERING_CHIP: Record<OrderingStatus, { label: string; box: string; dot: s
   closed: { label: 'Bar fechado', box: 'bg-error-bg text-error', dot: 'bg-error' },
 };
 
-/** Unidade padrão caso o usuário de equipe não tenha estabelecimento vinculado. */
-const FALLBACK_ESTABLISHMENT_ID = 'r1';
-
 export default function AttendantApp() {
+  return (
+    // Gestores também podem operar o tablet do salão (têm as mesmas permissões do atendente).
+    <StaffGate panelLabel="Tablet do atendente" allowedRoles={['attendant', 'manager']}>
+      {me => <AttendantPanel me={me} />}
+    </StaffGate>
+  );
+}
+
+function AttendantPanel({ me }: { me: MeResponse }) {
   const [section, setSection] = useState<AttendantSection>('floor');
-  const attendant = usePlatformUser(CURRENT_STAFF_USER_ID.attendant);
-  const suspended = useIsSuspended({ id: CURRENT_STAFF_USER_ID.attendant });
-  const establishmentId = attendant?.establishmentId ?? FALLBACK_ESTABLISHMENT_ID;
-  const establishment = useEstablishment(establishmentId);
+  const { toastMessage, showToast } = useToast();
+  const membership = me.memberships[0];
+  // Página pública: traz o status de pedidos (aberto, alta demanda, pausado, fechado).
+  const restaurant = useRestaurant(membership?.establishmentId);
 
-  if (suspended) return <AccessBlocked />;
+  if (!membership) {
+    return (
+      <AccessBlocked
+        title="Nenhum estabelecimento vinculado"
+        description="Seu usuário ainda não está vinculado a um estabelecimento. Peça ao gestor ou à administração."
+        action={{ label: 'Sair', onClick: () => void logout() }}
+      />
+    );
+  }
+  if (membership.establishmentStatus === 'suspended') {
+    return (
+      <AccessBlocked
+        title="Estabelecimento suspenso"
+        description="A administração da plataforma suspendeu este estabelecimento."
+        action={{ label: 'Sair', onClick: () => void logout() }}
+      />
+    );
+  }
 
-  const attendantName = attendant?.name ?? 'Atendente';
-  const chip = ORDERING_CHIP[establishment?.orderingStatus ?? 'open'];
+  const establishmentId = membership.establishmentId;
+  const chip = ORDERING_CHIP[restaurant.data?.orderingStatus ?? 'closed'];
   const current = SECTIONS.find(s => s.id === section) ?? SECTIONS[0];
 
   return (
@@ -60,9 +85,12 @@ export default function AttendantApp() {
             </button>
           ))}
         </nav>
-        <div className="mt-auto">
-          <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center" title={attendantName}>
-            <span className="text-white/80 text-xs font-bold">{getInitials(attendantName)}</span>
+        <div className="mt-auto flex flex-col items-center gap-3">
+          <button onClick={() => void logout()} title="Sair" aria-label="Sair" className="w-8 h-8 rounded-lg flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10">
+            <LogOut size={15} />
+          </button>
+          <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center" title={me.user.name}>
+            <span className="text-white/80 text-xs font-bold">{getInitials(me.user.name)}</span>
           </div>
         </div>
       </aside>
@@ -72,7 +100,7 @@ export default function AttendantApp() {
           <div>
             <h1 className="font-display font-bold text-foreground">{current.title}</h1>
             <p className="text-xs text-muted-foreground">
-              {establishment?.name ?? '—'} · {attendantName}
+              {membership.establishmentName} · {me.user.name}
             </p>
           </div>
           <div className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg', chip.box)}>
@@ -82,8 +110,9 @@ export default function AttendantApp() {
         </header>
 
         {section === 'floor' && <FloorMapSection establishmentId={establishmentId} />}
-        {section === 'menu' && <MenuAvailabilitySection establishmentId={establishmentId} actorName={attendantName} />}
+        {section === 'menu' && <MenuAvailabilitySection establishmentId={establishmentId} notify={showToast} />}
       </div>
+      <Toast message={toastMessage} />
     </div>
   );
 }

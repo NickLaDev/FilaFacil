@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
-import type { EstablishmentStatus } from '@/types/establishment';
+import type { EstablishmentStatus } from '@filafacil/shared';
 
 const PLAN_COLORS: Record<string, string> = {
   Start: 'bg-muted text-muted-foreground',

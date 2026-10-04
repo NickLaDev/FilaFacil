@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { Building2 } from 'lucide-react';
+import { PLAN_FEATURE_LABELS, type MeResponse } from '@filafacil/shared';
 import AccessBlocked from '@/components/layout/AccessBlocked';
 import PanelLayout from '@/components/layout/PanelLayout';
 import PlanLockedNotice from '@/components/layout/PlanLockedNotice';
+import StaffGate from '@/components/layout/StaffGate';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import Toast from '@/components/ui/Toast';
 import { useToast } from '@/components/ui/useToast';
-import { PLAN_FEATURE_LABELS } from '@/data/establishments';
-import { CURRENT_STAFF_USER_ID } from '@/data/users';
-import { useEstablishment, useOrganizationUnits } from '@/services/establishmentService';
+import { logout } from '@/services/authService';
 import { useEstablishmentPlan } from '@/services/planService';
-import { useIsSuspended, usePlatformUser } from '@/services/platformUserService';
 import UnitSelector from './components/UnitSelector';
 import { NAV_GROUPS, SECTION_FEATURE, sectionLabel, type ManagerSection } from './navigation';
 import FloorPlanSection from './sections/floor/FloorPlanSection';
@@ -18,45 +18,52 @@ import PromotionsSection from './sections/promotions/PromotionsSection';
 import QRCodesSection from './sections/QRCodesSection';
 import RecipesSection from './sections/recipes/RecipesSection';
 import WaitlistSection from './sections/waitlist/WaitlistSection';
-import type { ManagerSectionProps } from './types';
+import type { ManagerSectionProps, ManagerUnit } from './types';
 
-/** Unidade padrão caso o gestor não tenha estabelecimento vinculado. */
-const FALLBACK_ESTABLISHMENT_ID = 'r1';
+const toUnits = (me: MeResponse): ManagerUnit[] =>
+  me.memberships.map(m => ({ id: m.establishmentId, name: m.establishmentName, status: m.establishmentStatus, address: m.address, organizationId: m.organizationId }));
 
 export default function ManagerApp() {
-  const manager = usePlatformUser(CURRENT_STAFF_USER_ID.manager);
-  const suspended = useIsSuspended({ id: CURRENT_STAFF_USER_ID.manager });
-  const homeUnit = useEstablishment(manager?.establishmentId ?? FALLBACK_ESTABLISHMENT_ID);
-  const units = useOrganizationUnits(homeUnit?.organizationId ?? '');
-  const [activeUnitId, setActiveUnitId] = useState(manager?.establishmentId ?? FALLBACK_ESTABLISHMENT_ID);
+  return (
+    <StaffGate panelLabel="Painel gestor" allowedRoles={['manager']}>
+      {me => <ManagerPanel me={me} />}
+    </StaffGate>
+  );
+}
+
+function ManagerPanel({ me }: { me: MeResponse }) {
+  const units = toUnits(me);
+  const [activeUnitId, setActiveUnitId] = useState(units[0]?.id ?? '');
   const [section, setSection] = useState<ManagerSection>('menu');
-  const plan = useEstablishmentPlan(activeUnitId);
   const { toastMessage, showToast } = useToast();
+  const activeUnit = units.find(u => u.id === activeUnitId) ?? units[0];
+  const features = useEstablishmentPlan(activeUnit?.id ?? '').data?.features;
 
-  if (suspended) return <AccessBlocked />;
-  const activeUnit = units.find(u => u.id === activeUnitId) ?? homeUnit;
-  if (!activeUnit) return <AccessBlocked title="Unidade indisponível" description="Nenhum estabelecimento vinculado a este gestor." />;
-
-  const features = plan?.features ?? [];
-  const lockedFeature = (id: ManagerSection) => {
-    const feature = SECTION_FEATURE[id];
-    return feature && !features.includes(feature) ? feature : null;
-  };
-  const groups = NAV_GROUPS.map(group => ({
-    label: group.label,
-    items: group.items.map(item => ({ ...item, locked: lockedFeature(item.id) !== null })),
-  }));
-  const sectionProps: ManagerSectionProps = { unit: activeUnit, actorName: manager?.name ?? 'Gestor', notify: showToast };
-  const locked = lockedFeature(section);
+  if (!activeUnit) {
+    return (
+      <AccessBlocked
+        title="Nenhuma unidade vinculada"
+        description="Seu usuário ainda não está vinculado a um estabelecimento. Peça ao administrador da plataforma."
+        action={{ label: 'Sair', onClick: () => void logout() }}
+      />
+    );
+  }
 
   return (
     <>
       <PanelLayout
         panelLabel="Painel gestor"
-        groups={groups}
+        groups={NAV_GROUPS.map(group => ({
+          label: group.label,
+          items: group.items.map(item => {
+            const feature = SECTION_FEATURE[item.id];
+            return { ...item, locked: Boolean(feature && features && !features.includes(feature)) };
+          }),
+        }))}
         active={section}
         onNavigate={setSection}
-        user={{ name: manager?.name ?? 'Gestor', role: 'Gestor' }}
+        user={{ name: me.user.name, role: 'Gestor' }}
+        onSignOut={() => void logout()}
         title={sectionLabel(section)}
         sidebarSlot={<UnitSelector units={units} activeId={activeUnit.id} onSelect={setActiveUnitId} />}
         headerRight={
@@ -67,22 +74,53 @@ export default function ManagerApp() {
         }
       >
         {/* A troca de unidade remonta a seção e descarta rascunhos da unidade anterior. */}
-        <div key={`${activeUnit.id}-${section}`}>
-          {locked ? (
-            <PlanLockedNotice feature={PLAN_FEATURE_LABELS[locked]} planName={plan?.name} />
-          ) : (
-            <>
-              {section === 'menu' && <MenuSection {...sectionProps} />}
-              {section === 'promotions' && <PromotionsSection {...sectionProps} />}
-              {section === 'recipes' && <RecipesSection {...sectionProps} />}
-              {section === 'floor-plan' && <FloorPlanSection {...sectionProps} />}
-              {section === 'waitlist' && <WaitlistSection {...sectionProps} />}
-              {section === 'qrcodes' && <QRCodesSection {...sectionProps} onOpenFloorPlan={() => setSection('floor-plan')} />}
-            </>
-          )}
-        </div>
+        <UnitSection
+          key={`${activeUnit.id}-${section}`}
+          section={section}
+          sectionProps={{ unit: activeUnit, units: units.filter(u => u.organizationId === activeUnit.organizationId), notify: showToast }}
+          onOpenFloorPlan={() => setSection('floor-plan')}
+        />
       </PanelLayout>
       <Toast message={toastMessage} />
+    </>
+  );
+}
+
+interface UnitSectionProps {
+  section: ManagerSection;
+  sectionProps: ManagerSectionProps;
+  onOpenFloorPlan: () => void;
+}
+
+/** Seção ativa, liberada ou bloqueada conforme o plano vigente da unidade (a API aplica a mesma regra). */
+function UnitSection({ section, sectionProps, onOpenFloorPlan }: UnitSectionProps) {
+  const plan = useEstablishmentPlan(sectionProps.unit.id);
+
+  if (sectionProps.unit.status === 'suspended') {
+    return (
+      <PlanLockedNotice
+        feature={sectionProps.unit.name}
+        title="Estabelecimento suspenso"
+        description="A administração da plataforma suspendeu esta unidade. Fale com o suporte para regularizar."
+      />
+    );
+  }
+  if (plan.error) return <ErrorBlock error={plan.error} onRetry={() => void plan.refetch()} />;
+  if (!plan.data) return <LoadingBlock />;
+
+  const feature = SECTION_FEATURE[section];
+  if (feature && !plan.data.features.includes(feature)) {
+    return <PlanLockedNotice feature={PLAN_FEATURE_LABELS[feature]} planName={plan.data.name} />;
+  }
+
+  return (
+    <>
+      {section === 'menu' && <MenuSection {...sectionProps} />}
+      {section === 'promotions' && <PromotionsSection {...sectionProps} />}
+      {section === 'recipes' && <RecipesSection {...sectionProps} />}
+      {section === 'floor-plan' && <FloorPlanSection {...sectionProps} />}
+      {section === 'waitlist' && <WaitlistSection {...sectionProps} />}
+      {section === 'qrcodes' && <QRCodesSection {...sectionProps} onOpenFloorPlan={onOpenFloorPlan} />}
     </>
   );
 }

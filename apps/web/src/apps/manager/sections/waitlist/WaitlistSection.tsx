@@ -3,41 +3,47 @@ import { Bell, Check, ChevronDown, ChevronUp, Clock, Plus, Users, X } from 'luci
 import { buildFloorUnits, unitLiveState, type FloorUnit } from '@/components/floor/floorUnits';
 import { LIVE_STATUS_STYLE } from '@/components/floor/tableStyles';
 import EmptyState from '@/components/ui/EmptyState';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { useNow } from '@/lib/hooks';
+import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, formatTime } from '@/lib/utils';
-import { setTableLiveState, useFloorLayout, useTableLiveStates } from '@/services/floorService';
-import { estimateWaitMinutes, moveInWaitlist, notifyParty, releaseTable, removeFromWaitlist, useWaitlist } from '@/services/waitlistService';
+import { formatPhone } from '@/lib/validation';
+import { useFloorLayout, useTableLiveStates } from '@/services/floorService';
+import { moveInWaitlist, notifyParty, releaseTables, removeFromWaitlist, seatParty, useWaitlist } from '@/services/waitlistService';
 import type { ManagerSectionProps } from '../../types';
 import WaitlistEntryModal from './WaitlistEntryModal';
 
 const MINUTE_MS = 60_000;
 
-/** Ficha 21: fila de espera com estimativa pelas mesas livres e aviso automático ao liberar mesa. */
+/**
+ * Ficha 21: fila no servidor (posição, estimativa e aviso). Liberar uma mesa avisa
+ * automaticamente o primeiro grupo que cabe nela; os outros aparelhos atualizam em tempo real.
+ */
 export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
-  const entries = useWaitlist(unit.id);
-  const layout = useFloorLayout(unit.id);
-  const liveStates = useTableLiveStates();
+  const waitlist = useWaitlist(unit.id);
+  const { layout } = useFloorLayout(unit.id);
+  const liveStates = useTableLiveStates(unit.id);
   const now = useNow(30_000);
+  const { run } = useAsyncAction(notify);
   const [adding, setAdding] = useState(false);
 
-  const floorUnits = useMemo(() => buildFloorUnits(layout), [layout]);
+  const floorUnits = useMemo(() => (layout ? buildFloorUnits(layout) : []), [layout]);
+
+  if (waitlist.error) return <ErrorBlock error={waitlist.error} onRetry={() => void waitlist.refetch()} />;
+  if (!waitlist.data) return <LoadingBlock />;
+
+  const entries = waitlist.data.entries;
   const unitsWithState = floorUnits.map(floorUnit => ({ floorUnit, state: unitLiveState(floorUnit, liveStates) }));
   const freeUnits = unitsWithState.filter(u => u.state.status === 'free');
   const busyUnits = unitsWithState.filter(u => u.state.status !== 'free');
-
   const waiting = entries.filter(e => e.status === 'waiting');
-  const estimateFor = (entryId: string, partySize: number) => {
-    const groupsAhead = waiting.findIndex(e => e.id === entryId);
-    const freeCompatible = freeUnits.filter(u => u.floorUnit.capacity >= partySize).length;
-    return estimateWaitMinutes(groupsAhead, freeCompatible);
-  };
-  const longestEstimate = Math.max(0, ...waiting.map(e => estimateFor(e.id, e.partySize)));
+  const longestEstimate = Math.max(0, ...waiting.map(e => e.estimatedWaitMinutes ?? 0));
 
   function release(floorUnit: FloorUnit) {
-    const [first, ...others] = floorUnit.tables;
-    others.forEach(table => setTableLiveState(table.id, { status: 'free', people: 0 }));
-    const notified = releaseTable(unit.id, { ...first, label: floorUnit.label }, floorUnit.capacity);
-    notify(notified ? `${floorUnit.label} liberada — ${notified.name} notificado` : `${floorUnit.label} liberada`);
+    void run(
+      () => releaseTables(unit.id, floorUnit.tables.map(table => table.id)),
+      notified => (notified ? `${floorUnit.label} liberada — ${notified.name} notificado` : `${floorUnit.label} liberada`),
+    );
   }
 
   return (
@@ -72,7 +78,7 @@ export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
                 <tbody>
                   {entries.map((entry, index) => {
                     const waitedMin = Math.max(0, Math.floor((now - Date.parse(entry.joinedAt)) / MINUTE_MS));
-                    const estimate = entry.status === 'waiting' ? estimateFor(entry.id, entry.partySize) : null;
+                    const estimate = entry.estimatedWaitMinutes;
                     return (
                       <tr key={entry.id} className="border-b border-border last:border-0 hover:bg-muted/10">
                         <td className="px-4 py-3">
@@ -82,7 +88,7 @@ export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-sm font-medium text-foreground">{entry.name}</p>
-                          <p className="text-xs text-muted-foreground">{entry.phone}</p>
+                          <p className="text-xs text-muted-foreground">{formatPhone(entry.phone)}</p>
                         </td>
                         <td className="px-4 py-3 text-sm text-foreground">{entry.partySize} pessoas</td>
                         <td className="px-4 py-3 text-sm text-foreground">{waitedMin} min</td>
@@ -90,7 +96,7 @@ export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
                         <td className="px-4 py-3">
                           {entry.status === 'notified' ? (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-success/10 text-success whitespace-nowrap">
-                              Notificado {entry.notifiedAt ? formatTime(Date.parse(entry.notifiedAt)) : ''}
+                              Notificado {entry.notifiedAt ? formatTime(entry.notifiedAt) : ''}
                               {entry.notifiedTableLabel ? ` · ${entry.notifiedTableLabel}` : ''}
                             </span>
                           ) : (
@@ -99,37 +105,32 @@ export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
-                            <IconButton label={`Subir ${entry.name}`} disabled={index === 0} onClick={() => moveInWaitlist(entry.id, -1)}>
+                            <IconButton label={`Subir ${entry.name}`} disabled={index === 0} onClick={() => void run(() => moveInWaitlist(unit.id, entry.id, entry.position - 1))}>
                               <ChevronUp size={13} />
                             </IconButton>
-                            <IconButton label={`Descer ${entry.name}`} disabled={index === entries.length - 1} onClick={() => moveInWaitlist(entry.id, 1)}>
+                            <IconButton
+                              label={`Descer ${entry.name}`}
+                              disabled={index === entries.length - 1}
+                              onClick={() => void run(() => moveInWaitlist(unit.id, entry.id, entry.position + 1))}
+                            >
                               <ChevronDown size={13} />
                             </IconButton>
                             <button
-                              onClick={() => {
-                                notifyParty(entry.id, entry.notifiedTableLabel);
-                                notify(`${entry.name} notificado`);
-                              }}
+                              onClick={() => void run(() => notifyParty(unit.id, entry.id), `${entry.name} notificado`)}
                               className="text-xs bg-primary text-white font-medium px-2.5 py-1 rounded-lg hover:bg-primary/90 flex items-center gap-1"
                             >
                               <Bell size={11} />
                               {entry.status === 'notified' ? 'Avisar de novo' : 'Notificar'}
                             </button>
                             <button
-                              onClick={() => {
-                                removeFromWaitlist(entry.id);
-                                notify(`${entry.name} acomodado`);
-                              }}
+                              onClick={() => void run(() => seatParty(unit.id, entry.id), `${entry.name} acomodado`)}
                               className="text-xs bg-success/10 text-success font-medium px-2.5 py-1 rounded-lg hover:bg-success/20"
                             >
                               Sentar
                             </button>
                             <IconButton
                               label={`Remover ${entry.name} da fila`}
-                              onClick={() => {
-                                removeFromWaitlist(entry.id);
-                                notify(`${entry.name} removido da fila`);
-                              }}
+                              onClick={() => void run(() => removeFromWaitlist(unit.id, entry.id), `${entry.name} removido da fila`)}
                             >
                               <X size={13} />
                             </IconButton>
@@ -171,7 +172,7 @@ export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
         </aside>
       </div>
 
-      {adding && <WaitlistEntryModal establishmentId={unit.id} onClose={() => setAdding(false)} onAdded={name => notify(`${name} entrou na fila`)} />}
+      {adding && <WaitlistEntryModal establishmentId={unit.id} notify={notify} onClose={() => setAdding(false)} />}
     </div>
   );
 }

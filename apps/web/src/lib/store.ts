@@ -33,9 +33,9 @@ function writeStorage(key: string, value: unknown) {
 }
 
 /**
- * Store em memória espelhado no localStorage. Faz o papel de "backend" mockado:
- * mudanças feitas em um perfil (ex.: gestor) aparecem nos outros, inclusive em outra aba.
- * Para integrar a API real, basta trocar a implementação dos services que usam estes stores.
+ * Store em memória espelhado no localStorage. Usado só para o que ainda não tem API
+ * (funcionalidades da Sprint 2) e para preferências do aparelho (ex.: região escolhida).
+ * Dados da Sprint 1 vêm sempre do backend.
  */
 export function createPersistentStore<T>(name: string, initial: T): Store<T> {
   const key = STORAGE_PREFIX + name;
@@ -68,7 +68,7 @@ export function useStore<T>(store: Store<T>): T {
   return useSyncExternalStore(store.subscribe, store.get);
 }
 
-/** Apaga todos os dados mockados persistidos e volta ao seed. */
+/** Apaga os dados locais (mocks da Sprint 2 e preferências do aparelho). */
 export function resetPersistentStores() {
   Object.keys(localStorage)
     .filter(key => key.startsWith(STORAGE_PREFIX))

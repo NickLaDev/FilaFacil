@@ -1,9 +1,19 @@
-import { useMemo, useState } from 'react';
-import { BookOpen, Edit3, Plus, Search, Star, Trash2, X } from 'lucide-react';
+import { useState } from 'react';
+import { BookOpen, Edit3, ImageOff, Plus, Search, Star, Trash2, X } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
+import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, formatCurrency } from '@/lib/utils';
-import { deleteMenuItem, getCategories, getPopularItemIds, setItemAvailability, toggleFeatured, useMenuItems } from '@/services/menuService';
-import type { MenuItem } from '@/types/catalog';
+import {
+  deleteMenuItem,
+  getCategories,
+  setItemAvailability,
+  toggleFeatured,
+  useFeaturedIds,
+  useHighlightedIds,
+  useMenuItems,
+  type MenuItemView,
+} from '@/services/menuService';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import type { ManagerSectionProps } from '../../types';
 import MenuItemFormModal from './MenuItemFormModal';
@@ -11,20 +21,26 @@ import MenuItemFormModal from './MenuItemFormModal';
 const ALL_CATEGORIES = 'all';
 
 /** Fichas 28, 03 e 46: cadastro do cardápio que o cliente vê, com destaque manual "+ pedido". */
-export default function MenuSection({ unit, actorName, notify }: ManagerSectionProps) {
-  const items = useMenuItems(unit.id);
+export default function MenuSection({ unit, notify }: ManagerSectionProps) {
+  const query = useMenuItems(unit.id);
+  const items = query.data ?? [];
+  const featuredIds = useFeaturedIds();
+  const highlightedIds = useHighlightedIds();
+  const { run } = useAsyncAction(notify);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState(ALL_CATEGORIES);
-  const [editing, setEditing] = useState<MenuItem | 'new' | null>(null);
-  const [deleting, setDeleting] = useState<MenuItem | null>(null);
+  const [editing, setEditing] = useState<MenuItemView | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<MenuItemView | null>(null);
 
   const categories = getCategories(items);
-  const popularIds = useMemo(() => getPopularItemIds(items), [items]);
   const filtered = items.filter(item => {
     const query = search.trim().toLowerCase();
     const matchesSearch = !query || item.name.toLowerCase().includes(query) || item.description.toLowerCase().includes(query);
     return matchesSearch && (category === ALL_CATEGORIES || item.category === category);
   });
+
+  if (query.error) return <ErrorBlock error={query.error} onRetry={() => void query.refetch()} />;
+  if (!query.data) return <LoadingBlock />;
 
   return (
     <div className="p-6 flex flex-col gap-4">
@@ -107,10 +123,16 @@ export default function MenuSection({ unit, actorName, notify }: ManagerSectionP
                 <tr key={item.id} className="border-t border-border hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <img src={item.image} alt="" className={cn('w-10 h-10 rounded-lg object-cover bg-muted', !item.available && 'grayscale')} />
+                      {item.image ? (
+                        <img src={item.image} alt="" className={cn('w-10 h-10 rounded-lg object-cover bg-muted', !item.available && 'grayscale')} />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center" aria-label="Sem foto">
+                          <ImageOff size={14} className="text-muted-foreground" />
+                        </div>
+                      )}
                       <div className="min-w-0">
                         <p className="font-medium text-foreground text-sm">{item.name}</p>
-                        {(item.featured || popularIds.has(item.id)) && (
+                        {highlightedIds.has(item.id) && (
                           <span className="text-[10px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-md">+ pedido</span>
                         )}
                       </div>
@@ -120,7 +142,12 @@ export default function MenuSection({ unit, actorName, notify }: ManagerSectionP
                   <td className="px-4 py-3 font-display font-bold text-foreground text-sm">{formatCurrency(item.price)}</td>
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => setItemAvailability(item.id, !item.available, actorName)}
+                      onClick={() =>
+                        void run(
+                          () => setItemAvailability(unit.id, item.id, !item.available),
+                          `${item.name} ${item.available ? 'marcado como esgotado' : 'disponível de novo'}`,
+                        )
+                      }
                       title={item.available ? 'Marcar como esgotado' : 'Reativar item'}
                       className={cn('text-xs font-bold px-2.5 py-1 rounded-full', item.available ? 'bg-success-bg text-success' : 'bg-muted text-muted-foreground')}
                     >
@@ -131,12 +158,12 @@ export default function MenuSection({ unit, actorName, notify }: ManagerSectionP
                     <div className="flex gap-1">
                       <button
                         onClick={() => toggleFeatured(item.id)}
-                        title={item.featured ? 'Remover destaque' : 'Destacar como "+ pedido"'}
-                        aria-pressed={item.featured}
+                        title={featuredIds.has(item.id) ? 'Remover destaque' : 'Destacar como "+ pedido"'}
+                        aria-pressed={featuredIds.has(item.id)}
                         aria-label={`Destacar ${item.name}`}
                         className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-primary"
                       >
-                        <Star size={14} className={item.featured ? 'fill-primary text-primary' : ''} />
+                        <Star size={14} className={featuredIds.has(item.id) ? 'fill-primary text-primary' : ''} />
                       </button>
                       <button onClick={() => setEditing(item)} aria-label={`Editar ${item.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground">
                         <Edit3 size={14} />
@@ -166,7 +193,7 @@ export default function MenuSection({ unit, actorName, notify }: ManagerSectionP
           item={editing === 'new' ? undefined : editing}
           categories={categories}
           onClose={() => setEditing(null)}
-          onSaved={message => notify(message)}
+          notify={notify}
         />
       )}
       {deleting && (
@@ -174,10 +201,7 @@ export default function MenuSection({ unit, actorName, notify }: ManagerSectionP
           title="Excluir item"
           message={`"${deleting.name}" sai do cardápio do cliente e das promoções em que estiver.`}
           confirmLabel="Excluir item"
-          onConfirm={() => {
-            deleteMenuItem(deleting.id);
-            notify(`${deleting.name} excluído do cardápio`);
-          }}
+          onConfirm={() => run(() => deleteMenuItem(unit.id, deleting.id), `${deleting.name} excluído do cardápio`)}
           onClose={() => setDeleting(null)}
         />
       )}

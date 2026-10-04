@@ -1,3 +1,5 @@
+import type { OtpChallengeResponse } from '@filafacil/shared';
+
 export type ClientScreen =
   | 'splash' | 'welcome'
   | 'login' | 'verify-code' | 'forgot-password'
@@ -21,16 +23,21 @@ export interface CartLine {
   itemId: string;
   quantity: number;
   notes: string;
+  /** Nome/foto no momento da adição: o item continua identificável se ficar esgotado. */
+  name: string;
+  image: string | null;
 }
 
 export type VerificationChannel = 'email' | 'phone';
 
 export interface VerificationRequest {
-  /** login: entrar por SMS · signup: confirmar contato do cadastro · contact: confirmar depois. */
+  /** login: entrar por código (real) · signup/contact: confirmar contato (Sprint 2, simulado). */
   purpose: 'login' | 'signup' | 'contact';
   channel: VerificationChannel;
   destination: string;
   returnTo: ClientScreen;
+  /** Desafio emitido pela API no login por código (contato original para reenviar). */
+  login?: { challenge: OtpChallengeResponse; rawDestination: string };
 }
 
 export interface SignupDraft {
@@ -38,4 +45,8 @@ export interface SignupDraft {
   cpf: string;
   email: string;
   phone: string;
+  /** Só em memória até o envio do cadastro; nunca é persistida no navegador. */
+  password: string;
+  /** Recusa do servidor (CPF/contato já cadastrado) exibida no passo correspondente. */
+  serverError?: { field: 'cpf' | 'contact'; message: string };
 }

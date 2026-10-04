@@ -1,24 +1,33 @@
 import { useState, type UIEvent } from 'react';
 import { ChevronLeft, Clock, MapPin, Navigation, Pause, QrCode, Star, Utensils } from 'lucide-react';
+import { imageOrPlaceholder } from '@/lib/images';
 import { cn } from '@/lib/utils';
-import { useEstablishment } from '@/services/establishmentService';
+import { LoadingBlock } from '@/components/ui/QueryState';
+import { useClientLocation } from '@/services/deviceService';
+import { useRestaurant } from '@/services/restaurantService';
 import { useClient } from '../clientContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { FixedBottom } from '../components/Layout';
 import { FavoriteButton, StatusBadge } from '../components/RestaurantCard';
-import { formatDistance } from '../format';
+import RestaurantUnavailable from '../components/RestaurantUnavailable';
+import { distanceMeters, formatDistance } from '../format';
 
 /** Página do restaurante: galeria, nota, endereço com rota e horário do dia (ficha 12). */
 export default function RestaurantDetailScreen() {
   const { go, establishmentId, table, openMenu } = useClient();
-  const restaurant = useEstablishment(establishmentId);
+  const query = useRestaurant(establishmentId);
+  const restaurant = query.data;
+  const { coords } = useClientLocation();
   const { favoriteIds, toggle } = useFavorites();
   const [photoIndex, setPhotoIndex] = useState(0);
 
-  if (!restaurant) return null;
+  if (query.error) return <RestaurantUnavailable error={query.error} onRetry={() => void query.refetch()} onExplore={() => go('explore')} />;
+  if (!restaurant) return <LoadingBlock className="min-h-screen" />;
   const closed = restaurant.orderingStatus === 'closed';
   const isLinked = table?.establishmentId === restaurant.id;
-  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${restaurant.address}, ${restaurant.city}`)}`;
+  const distance = restaurant.distanceM ?? distanceMeters(coords, { lat: restaurant.latitude, lng: restaurant.longitude });
+  // "Como chegar" abre o app de mapas com as coordenadas cadastradas.
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${restaurant.latitude},${restaurant.longitude}`;
 
   function handleGalleryScroll(event: UIEvent<HTMLDivElement>) {
     const { scrollLeft, clientWidth } = event.currentTarget;
@@ -29,7 +38,7 @@ export default function RestaurantDetailScreen() {
     <div className="min-h-screen bg-background flex flex-col pb-52">
       <div className="relative h-48 flex-shrink-0">
         <div className="flex h-full overflow-x-auto snap-x snap-mandatory [scrollbar-width:none]" onScroll={handleGalleryScroll}>
-          {restaurant.images.map((image, index) => (
+          {(restaurant.images.length ? restaurant.images : [imageOrPlaceholder(null)]).map((image, index) => (
             <img
               key={image}
               src={image}
@@ -71,7 +80,7 @@ export default function RestaurantDetailScreen() {
           <div className="flex items-center gap-3 mt-2 flex-wrap">
             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <MapPin size={13} />
-              <span>{formatDistance(restaurant.distanceM)}</span>
+              <span>{formatDistance(distance)}</span>
             </div>
             {!closed && (
               <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -86,7 +95,7 @@ export default function RestaurantDetailScreen() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {[...restaurant.foodCategories, ...restaurant.tags].map(tag => (
+          {[...new Set([...restaurant.foodCategories, ...restaurant.tags])].map(tag => (
             <span key={tag} className="bg-muted text-muted-foreground text-xs px-3 py-1.5 rounded-full">{tag}</span>
           ))}
         </div>
@@ -104,7 +113,7 @@ export default function RestaurantDetailScreen() {
           </div>
           <div className="flex items-center gap-3">
             <Clock size={15} className="text-muted-foreground flex-shrink-0" />
-            <p className="text-sm text-muted-foreground">{restaurant.hours}</p>
+            <p className="text-sm text-muted-foreground">{restaurant.hoursLabel}</p>
           </div>
         </div>
 
@@ -120,7 +129,7 @@ export default function RestaurantDetailScreen() {
         {closed && (
           <div className="bg-muted rounded-xl p-4">
             <p className="text-sm font-medium text-foreground">Estabelecimento fechado</p>
-            <p className="text-xs text-muted-foreground mt-1">{restaurant.hours}</p>
+            <p className="text-xs text-muted-foreground mt-1">{restaurant.hoursLabel}</p>
           </div>
         )}
 

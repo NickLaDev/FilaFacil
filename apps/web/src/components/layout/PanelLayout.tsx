@@ -1,5 +1,5 @@
 import type { ElementType, ReactNode } from 'react';
-import { Lock } from 'lucide-react';
+import { Lock, LogOut } from 'lucide-react';
 import { BRAND } from '@/config/brand';
 import { BrandMark } from '@/components/brand/Logo';
 import { cn, formatDate, getInitials } from '@/lib/utils';
@@ -23,6 +23,7 @@ interface PanelLayoutProps<T extends string> {
   active: T;
   onNavigate: (id: T) => void;
   user: { name: string; role: string };
+  onSignOut?: () => void;
   title: string;
   sidebarSlot?: ReactNode;
   headerRight?: ReactNode;
@@ -31,7 +32,7 @@ interface PanelLayoutProps<T extends string> {
 
 /** Casca dos painéis Gestor e Admin: sidebar escura + cabeçalho (visual do protótipo). */
 export default function PanelLayout<T extends string>({
-  panelLabel, groups, active, onNavigate, user, title, sidebarSlot, headerRight, children,
+  panelLabel, groups, active, onNavigate, user, onSignOut, title, sidebarSlot, headerRight, children,
 }: PanelLayoutProps<T>) {
   return (
     <div className="h-screen bg-background flex overflow-hidden">
@@ -73,10 +74,15 @@ export default function PanelLayout<T extends string>({
             <div className="w-7 h-7 rounded-full bg-primary/30 flex items-center justify-center flex-shrink-0">
               <span className="text-white text-[10px] font-bold">{getInitials(user.name)}</span>
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-white text-xs font-medium leading-none truncate">{user.name}</p>
               <p className="text-white/40 text-[10px] mt-0.5">{user.role}</p>
             </div>
+            {onSignOut && (
+              <button onClick={onSignOut} title="Sair" aria-label="Sair" className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10">
+                <LogOut size={13} />
+              </button>
+            )}
           </div>
         </div>
       </aside>

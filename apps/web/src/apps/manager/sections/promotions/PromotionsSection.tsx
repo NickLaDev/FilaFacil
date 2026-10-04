@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Edit3, Plus, Tag, Trash2 } from 'lucide-react';
+import type { PromotionDto, PromotionState } from '@filafacil/shared';
 import EmptyState from '@/components/ui/EmptyState';
-import { useNow } from '@/lib/hooks';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
+import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, formatDateTime } from '@/lib/utils';
-import { deletePromotion, getPromotionState, useMenuItems, usePromotions } from '@/services/menuService';
-import type { Promotion, PromotionState } from '@/types/catalog';
+import { useMenuItems } from '@/services/menuService';
+import { deletePromotion, usePromotions } from '@/services/promotionService';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import type { ManagerSectionProps } from '../../types';
 import PromotionFormModal from './PromotionFormModal';
@@ -19,15 +21,20 @@ const STATE_ORDER: PromotionState[] = ['active', 'scheduled', 'expired'];
 
 /** Ficha 29: o período define quando a promoção entra e sai do cardápio do cliente. */
 export default function PromotionsSection({ unit, notify }: ManagerSectionProps) {
-  const promotions = usePromotions(unit.id);
-  const items = useMenuItems(unit.id);
-  const now = useNow(30_000);
-  const [editing, setEditing] = useState<Promotion | 'new' | null>(null);
-  const [deleting, setDeleting] = useState<Promotion | null>(null);
+  const promotionsQuery = usePromotions(unit.id);
+  const itemsQuery = useMenuItems(unit.id);
+  const items = itemsQuery.data ?? [];
+  const { run } = useAsyncAction(notify);
+  const [editing, setEditing] = useState<PromotionDto | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<PromotionDto | null>(null);
+
+  if (promotionsQuery.error) return <ErrorBlock error={promotionsQuery.error} onRetry={() => void promotionsQuery.refetch()} />;
+  if (!promotionsQuery.data || !itemsQuery.data) return <LoadingBlock />;
 
   const itemName = (id: string) => items.find(i => i.id === id)?.name;
-  const sorted = [...promotions].sort(
-    (a, b) => STATE_ORDER.indexOf(getPromotionState(a, now)) - STATE_ORDER.indexOf(getPromotionState(b, now)) || Date.parse(a.startsAt) - Date.parse(b.startsAt),
+  // O status vem do servidor (derivado do período); a ordem destaca as ativas.
+  const sorted = [...promotionsQuery.data].sort(
+    (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) || Date.parse(a.startsAt) - Date.parse(b.startsAt),
   );
 
   return (
@@ -52,7 +59,7 @@ export default function PromotionsSection({ unit, notify }: ManagerSectionProps)
       ) : (
         <div className="flex flex-col gap-3">
           {sorted.map(promotion => {
-            const state = getPromotionState(promotion, now);
+            const state = promotion.state;
             const names = promotion.itemIds.map(itemName).filter(Boolean);
             return (
               <div key={promotion.id} className={cn('bg-card rounded-xl border border-border p-5 flex items-center justify-between gap-4', state === 'expired' && 'opacity-60')}>
@@ -88,7 +95,7 @@ export default function PromotionsSection({ unit, notify }: ManagerSectionProps)
           promotion={editing === 'new' ? undefined : editing}
           items={items}
           onClose={() => setEditing(null)}
-          onSaved={notify}
+          notify={notify}
         />
       )}
       {deleting && (
@@ -96,10 +103,7 @@ export default function PromotionsSection({ unit, notify }: ManagerSectionProps)
           title="Excluir promoção"
           message={`"${deleting.name}" deixa de valer imediatamente no cardápio do cliente.`}
           confirmLabel="Excluir promoção"
-          onConfirm={() => {
-            deletePromotion(deleting.id);
-            notify(`Promoção ${deleting.name} excluída`);
-          }}
+          onConfirm={() => run(() => deletePromotion(unit.id, deleting.id), `Promoção ${deleting.name} excluída`)}
           onClose={() => setDeleting(null)}
         />
       )}

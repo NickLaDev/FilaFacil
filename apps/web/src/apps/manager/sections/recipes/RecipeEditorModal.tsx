@@ -2,9 +2,11 @@ import { useState, type FormEvent } from 'react';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import FormField, { PANEL_INPUT_CLASS } from '@/components/ui/FormField';
 import Modal from '@/components/ui/Modal';
+import type { TechnicalSheetDto } from '@filafacil/shared';
+import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, createId, formatCurrency } from '@/lib/utils';
-import { calculateRecipeCost, costPercentOfPrice, saveRecipe } from '@/services/recipeService';
-import type { Ingredient, MenuItem, Recipe } from '@/types/catalog';
+import type { MenuItemView } from '@/services/menuService';
+import { costPercentOfPrice, previewRecipeCost, saveTechnicalSheet, type IngredientView } from '@/services/recipeService';
 import { formatPercent } from './recipeFormat';
 
 const DEFAULT_COST_LIMIT = 35;
@@ -16,17 +18,19 @@ interface DraftLine {
 }
 
 interface Props {
-  recipe?: Recipe;
+  establishmentId: string;
+  recipe?: TechnicalSheetDto;
   /** Itens selecionáveis: na criação, só os que ainda não têm ficha. */
-  items: MenuItem[];
-  ingredients: Ingredient[];
+  items: MenuItemView[];
+  ingredients: IngredientView[];
+  notify: (message: string) => void;
   onClose: () => void;
-  onSaved: (message: string) => void;
 }
 
 const parseQuantity = (value: string) => Number(value.replace(',', '.'));
 
-export default function RecipeEditorModal({ recipe, items, ingredients, onClose, onSaved }: Props) {
+export default function RecipeEditorModal({ establishmentId, recipe, items, ingredients, notify, onClose }: Props) {
+  const { run, pending } = useAsyncAction(notify);
   const [menuItemId, setMenuItemId] = useState(recipe?.menuItemId ?? items[0]?.id ?? '');
   const [lines, setLines] = useState<DraftLine[]>(() =>
     recipe?.lines.length
@@ -40,14 +44,15 @@ export default function RecipeEditorModal({ recipe, items, ingredients, onClose,
   const validLines = lines
     .map(line => ({ ingredientId: line.ingredientId, quantity: parseQuantity(line.quantity) }))
     .filter(line => line.ingredientId && Number.isFinite(line.quantity) && line.quantity > 0);
-  const cost = calculateRecipeCost({ id: '', menuItemId, costLimitPercent: 0, lines: validLines }, ingredients);
+  // Prévia durante a edição; ao salvar, vale o custo calculado pelo servidor.
+  const cost = previewRecipeCost(validLines, ingredients);
   const percent = item ? costPercentOfPrice(cost, item.price) : 0;
   const limitValue = Number(limit);
   const overLimit = item !== undefined && Number.isFinite(limitValue) && percent > limitValue;
 
   const updateLine = (key: string, patch: Partial<DraftLine>) => setLines(prev => prev.map(line => (line.key === key ? { ...line, ...patch } : line)));
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const ingredientIds = lines.map(line => line.ingredientId);
     if (!item) return setError('Escolha o item do cardápio.');
@@ -55,14 +60,16 @@ export default function RecipeEditorModal({ recipe, items, ingredients, onClose,
     if (validLines.length !== lines.length) return setError('Cada linha precisa de um insumo e uma quantidade maior que zero.');
     if (new Set(ingredientIds).size !== ingredientIds.length) return setError('Cada insumo pode aparecer só uma vez na ficha.');
     if (!Number.isFinite(limitValue) || limitValue <= 0 || limitValue > 100) return setError('O limite de custo deve ficar entre 1% e 100%.');
-    saveRecipe(item.id, validLines, Math.round(limitValue));
-    onSaved(`Ficha técnica de ${item.name} salva`);
-    onClose();
+    const saved = await run(
+      () => saveTechnicalSheet(establishmentId, item.id, validLines, Math.round(limitValue)),
+      result => `Ficha técnica de ${item.name} salva · custo ${formatCurrency(Number(result.totalCost))}`,
+    );
+    if (saved) onClose();
   }
 
   return (
     <Modal title={recipe ? 'Editar ficha técnica' : 'Nova ficha técnica'} onClose={onClose} width="lg">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+      <form onSubmit={event => void handleSubmit(event)} className="flex flex-col gap-4" noValidate>
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_160px] gap-3">
           <FormField label="Item do cardápio" htmlFor="recipe-item">
             <select id="recipe-item" value={menuItemId} onChange={e => setMenuItemId(e.target.value)} disabled={Boolean(recipe)} className={PANEL_INPUT_CLASS}>
@@ -134,7 +141,7 @@ export default function RecipeEditorModal({ recipe, items, ingredients, onClose,
 
         <div className={cn('rounded-lg p-3 flex flex-col gap-1.5', overLimit ? 'bg-warning-bg' : 'bg-muted')}>
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Custo calculado</span>
+            <span className="text-muted-foreground">Custo estimado</span>
             <span className="font-medium text-foreground">{formatCurrency(cost)}</span>
           </div>
           <div className="flex justify-between text-sm">
@@ -155,7 +162,7 @@ export default function RecipeEditorModal({ recipe, items, ingredients, onClose,
           <button type="button" onClick={onClose} className="flex-1 border border-border rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-muted">
             Cancelar
           </button>
-          <button type="submit" className="flex-1 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold">
+          <button type="submit" disabled={pending} className="flex-1 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60">
             Salvar ficha
           </button>
         </div>

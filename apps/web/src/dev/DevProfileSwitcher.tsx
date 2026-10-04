@@ -23,6 +23,7 @@ interface Props {
 export default function DevProfileSwitcher({ active, onChange }: Props) {
   const [open, setOpen] = useState(false);
 
+  /** Só os dados ainda simulados no navegador; os da API voltam ao seed com `pnpm db:seed`. */
   function resetDemoData() {
     resetPersistentStores();
     window.location.reload();
@@ -72,7 +73,7 @@ export default function DevProfileSwitcher({ active, onChange }: Props) {
         className="mt-2 w-full flex items-center justify-center gap-1.5 text-[11px] text-white/50 hover:text-white border-t border-white/10 pt-2"
       >
         <RotateCcw size={11} />
-        Restaurar dados de demonstração
+        Limpar mocks locais (Sprint 2)
       </button>
     </div>
   );

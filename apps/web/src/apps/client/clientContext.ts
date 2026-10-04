@@ -1,6 +1,14 @@
 import { createContext, useContext } from 'react';
-import type { ClientAccount } from '@/types/user';
+import type { AuthUser } from '@filafacil/shared';
 import type { CartLine, ClientScreen, SignupDraft, TableContext, VerificationRequest } from './types';
+
+/**
+ * Conta do cliente vinda da API. `emailVerified`/`phoneVerified` também consideram a
+ * confirmação simulada da ficha 65 (Sprint 2), ainda sem backend.
+ */
+export type ClientAccount = AuthUser;
+
+export const isAccountVerified = (account: ClientAccount) => account.emailVerified || account.phoneVerified;
 
 export interface ClientContextValue {
   screen: ClientScreen;
@@ -8,6 +16,9 @@ export interface ClientContextValue {
   showToast: (message: string) => void;
 
   account: ClientAccount | null;
+  /** Sessão ainda sendo conferida na API (a splash espera antes de decidir a próxima tela). */
+  sessionLoading: boolean;
+  signOut: () => Promise<void>;
   isVisitor: boolean;
   continueAsVisitor: (destination: ClientScreen) => void;
   /** Para onde voltar depois de login/cadastro (ex.: carrinho, mesa do QR). */

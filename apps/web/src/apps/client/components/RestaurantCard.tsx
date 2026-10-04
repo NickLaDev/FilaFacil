@@ -1,6 +1,8 @@
 import { Clock, Heart, Star } from 'lucide-react';
+import type { OrderingStatus } from '@filafacil/shared';
+import { imageOrPlaceholder } from '@/lib/images';
 import { cn } from '@/lib/utils';
-import type { Establishment, OrderingStatus } from '@/types/establishment';
+import type { Restaurant } from '@/services/restaurantService';
 import { formatDistance } from '../format';
 
 export function StatusBadge({ status, highDemand, size = 'xs' }: { status: OrderingStatus; highDemand: boolean; size?: 'xs' | '2xs' }) {
@@ -57,7 +59,7 @@ export function FavoriteButton({ isFavorite, onToggle, className }: FavoriteButt
 }
 
 interface RestaurantCardProps {
-  restaurant: Establishment;
+  restaurant: Restaurant;
   onPress: () => void;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
@@ -74,7 +76,7 @@ export default function RestaurantCard({ restaurant: r, onPress, isFavorite = fa
       onKeyDown={event => event.key === 'Enter' && onPress()}
     >
       <div className="relative h-36">
-        <img src={r.images[0]} alt={r.name} className={cn('w-full h-full object-cover bg-muted', closed && 'grayscale')} />
+        <img src={imageOrPlaceholder(r.images[0])} alt={r.name} className={cn('w-full h-full object-cover bg-muted', closed && 'grayscale')} />
         {onToggleFavorite && <FavoriteButton isFavorite={isFavorite} onToggle={onToggleFavorite} className="absolute top-3 right-3" />}
         {r.highDemand && !closed && (
           <span className="absolute bottom-3 left-3 text-[10px] font-bold bg-warning text-white px-2 py-1 rounded-full">Alta demanda</span>
@@ -85,7 +87,7 @@ export default function RestaurantCard({ restaurant: r, onPress, isFavorite = fa
           <div className="flex-1 min-w-0">
             <p className="font-display font-semibold text-foreground">{r.name}</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="text-xs text-muted-foreground">{r.foodCategories.join(' · ') || r.type}</span>
+              <span className="text-xs text-muted-foreground">{r.foodCategories.join(' · ') || r.typeLabel}</span>
               <span className="text-border">·</span>
               <span className="text-xs text-muted-foreground">{formatDistance(r.distanceM)}</span>
               {r.ratingCount > 0 && (

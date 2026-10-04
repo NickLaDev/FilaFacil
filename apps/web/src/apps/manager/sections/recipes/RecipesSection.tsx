@@ -1,28 +1,32 @@
 import { useState } from 'react';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { cn } from '@/lib/utils';
 import { useMenuItems } from '@/services/menuService';
-import { useIngredients, useRecipes } from '@/services/recipeService';
+import { useIngredients, useTechnicalSheets } from '@/services/recipeService';
 import type { ManagerSectionProps } from '../../types';
 import IngredientsTab from './IngredientsTab';
 import RecipesTab from './RecipesTab';
 
 type RecipesTabId = 'recipes' | 'ingredients';
 
-/** Ficha 31: custo dos pratos derivado do preço atual de cada insumo. */
+/** Ficha 31: custo dos pratos calculado pelo servidor a partir do preço atual de cada insumo. */
 export default function RecipesSection({ unit, notify }: ManagerSectionProps) {
   const [tab, setTab] = useState<RecipesTabId>('recipes');
   const items = useMenuItems(unit.id);
   const ingredients = useIngredients(unit.id);
-  const allRecipes = useRecipes();
-  const recipes = allRecipes.filter(r => items.some(i => i.id === r.menuItemId));
+  const sheets = useTechnicalSheets(unit.id);
+
+  const failed = items.error ?? ingredients.error ?? sheets.error;
+  if (failed) return <ErrorBlock error={failed} onRetry={() => void Promise.all([items.refetch(), ingredients.refetch(), sheets.refetch()])} />;
+  if (!items.data || !ingredients.data || !sheets.data) return <LoadingBlock />;
 
   return (
     <div className="p-6 flex flex-col gap-5">
       <div className="flex gap-2 border-b border-border">
         {(
           [
-            { id: 'recipes', label: `Fichas (${recipes.length})` },
-            { id: 'ingredients', label: `Insumos (${ingredients.length})` },
+            { id: 'recipes', label: `Fichas (${sheets.data.length})` },
+            { id: 'ingredients', label: `Insumos (${ingredients.data.length})` },
           ] as const
         ).map(option => (
           <button
@@ -38,9 +42,9 @@ export default function RecipesSection({ unit, notify }: ManagerSectionProps) {
         ))}
       </div>
       {tab === 'recipes' ? (
-        <RecipesTab items={items} recipes={recipes} ingredients={ingredients} notify={notify} />
+        <RecipesTab establishmentId={unit.id} items={items.data} sheets={sheets.data} ingredients={ingredients.data} notify={notify} />
       ) : (
-        <IngredientsTab establishmentId={unit.id} ingredients={ingredients} recipes={recipes} notify={notify} />
+        <IngredientsTab establishmentId={unit.id} ingredients={ingredients.data} notify={notify} />
       )}
     </div>
   );

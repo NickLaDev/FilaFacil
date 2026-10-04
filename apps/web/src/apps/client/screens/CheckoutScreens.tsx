@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock, Copy, CreditCard, Loader2, MapPin, Minus, Plus, QrCode, ShieldAlert, ShoppingCart, Trash2, X, Zap } from 'lucide-react';
 import { cn, formatCurrency } from '@/lib/utils';
 import { formatCardExpiry, formatCardNumber, isValidCardExpiry, isValidCardNumber, onlyDigits } from '@/lib/validation';
-import { isAccountVerified } from '@/services/authService';
-import { useEstablishment } from '@/services/establishmentService';
+import { imageOrPlaceholder } from '@/lib/images';
+import { formatPhone } from '@/lib/validation';
+import { useRestaurantData } from '@/services/restaurantService';
 import { DECLINED_CARD_SUFFIX, getEstimatedTime, getOrderStatus, placeOrder, processPayment, useOrder, type CardInput } from '@/services/orderService';
 import type { PaymentMethod } from '@/types/order';
-import { useClient } from '../clientContext';
+import { isAccountVerified, useClient } from '../clientContext';
 import { useCartSummary } from '../hooks/useCart';
 import { FixedBottom, ResultScreen, ScreenHeader } from '../components/Layout';
 import { PAYMENT_METHOD_LABELS } from '../format';
@@ -15,7 +16,7 @@ import { PAYMENT_METHOD_LABELS } from '../format';
 export function CartScreen() {
   const { go, account, table, changeCartQuantity, removeCartLine, setPostAuthScreen } = useClient();
   const { lines, subtotal, discount, total, hasUnavailable } = useCartSummary();
-  const establishment = useEstablishment(table?.establishmentId);
+  const establishment = useRestaurantData(table?.establishmentId);
 
   function promptLogin() {
     setPostAuthScreen('cart');
@@ -45,7 +46,7 @@ export function CartScreen() {
             {lines.map((line, index) => (
               <div key={`${line.itemId}-${line.notes}`} className={cn('bg-card rounded-xl border p-4', line.item.available ? 'border-border' : 'border-error/40')}>
                 <div className="flex gap-3">
-                  <img src={line.item.image} alt={line.item.name} className={cn('w-14 h-14 rounded-lg object-cover bg-muted flex-shrink-0', !line.item.available && 'grayscale')} />
+                  <img src={imageOrPlaceholder(line.item.image)} alt={line.item.name} className={cn('w-14 h-14 rounded-lg object-cover bg-muted flex-shrink-0', !line.item.available && 'grayscale')} />
                   <div className="flex-1 min-w-0">
                     <p className="font-display font-semibold text-foreground text-sm">{line.item.name}</p>
                     {line.notes && <p className="text-xs text-muted-foreground mt-0.5">{line.notes}</p>}
@@ -125,7 +126,7 @@ const EMPTY_CARD: CardInput = { number: '', holder: '', expiry: '', cvv: '' };
 export function PaymentScreen() {
   const { go, account, table, cartEstablishmentId, clearCart, openOrder, requestVerification, showToast } = useClient();
   const { lines, total, count, hasUnavailable } = useCartSummary();
-  const establishment = useEstablishment(cartEstablishmentId);
+  const establishment = useRestaurantData(cartEstablishmentId);
   const [method, setMethod] = useState<PaymentMethod>('pix');
   const [card, setCard] = useState<CardInput>(EMPTY_CARD);
   const [cardError, setCardError] = useState('');
@@ -150,7 +151,7 @@ export function PaymentScreen() {
             </p>
           </div>
           <button
-            onClick={() => requestVerification({ purpose: 'contact', channel, destination: account.email || account.phone, returnTo: 'payment' })}
+            onClick={() => requestVerification({ purpose: 'contact', channel, destination: account.email ?? formatPhone(account.phone ?? ''), returnTo: 'payment' })}
             className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl"
           >
             Verificar agora

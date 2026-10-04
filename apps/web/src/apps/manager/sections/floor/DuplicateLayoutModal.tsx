@@ -1,37 +1,59 @@
 import { useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { AlertTriangle, Copy } from 'lucide-react';
+import type { FloorPlanDto } from '@filafacil/shared';
 import Modal from '@/components/ui/Modal';
+import { api, errorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
-import { duplicateFloorLayout, getFloorLayout, qrPrefixFromName } from '@/services/floorService';
-import type { Establishment } from '@/types/establishment';
+import { duplicateFloorLayout } from '@/services/floorService';
+import { staffKeys } from '@/services/staffKeys';
+import type { ManagerUnit } from '../../types';
 
 interface Props {
-  target: Establishment;
-  units: Establishment[];
+  target: ManagerUnit;
+  units: ManagerUnit[];
   hasUnsavedChanges: boolean;
   onClose: () => void;
-  onDuplicated: (sourceName: string) => void;
+  onDuplicated: (sourceName: string) => Promise<void>;
 }
 
 /** Ficha 61: copia mesas, posições e capacidades de outra unidade da mesma organização. */
 export default function DuplicateLayoutModal({ target, units, hasUnsavedChanges, onClose, onDuplicated }: Props) {
-  const sources = units
-    .filter(u => u.id !== target.id)
-    .map(u => ({ unit: u, tableCount: getFloorLayout(u.id).tables.length }))
+  const candidates = units.filter(u => u.id !== target.id);
+  const plans = useQueries({
+    queries: candidates.map(unit => ({
+      queryKey: staffKeys.floor(unit.id),
+      queryFn: () => api.get<FloorPlanDto>(`/establishments/${unit.id}/floor-plan`),
+    })),
+  });
+  const sources = candidates
+    .map((unit, index) => ({ unit, tableCount: plans[index]?.data?.tables.length ?? 0 }))
     .filter(source => source.tableCount > 0);
-  const [sourceId, setSourceId] = useState(sources[0]?.unit.id ?? '');
+  const loading = plans.some(plan => plan.isPending);
+  const [chosenId, setSourceId] = useState<string | null>(null);
+  const sourceId = chosenId ?? sources[0]?.unit.id ?? '';
   const source = sources.find(s => s.unit.id === sourceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  function confirm() {
+  async function confirm() {
     if (!source) return;
-    duplicateFloorLayout(source.unit.id, target.id, qrPrefixFromName(target.name));
-    onDuplicated(source.unit.name);
-    onClose();
+    setBusy(true);
+    try {
+      await duplicateFloorLayout(source.unit.id, target.id);
+      await onDuplicated(source.unit.name);
+      onClose();
+    } catch (failure) {
+      setError(errorMessage(failure, 'Não foi possível duplicar a planta.'));
+      setBusy(false);
+    }
   }
 
   return (
     <Modal title="Duplicar layout" onClose={onClose} width="md">
-      {sources.length === 0 ? (
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Carregando plantas das unidades…</p>
+      ) : sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nenhuma outra unidade da organização tem planta desenhada para servir de modelo.</p>
       ) : (
         <div className="flex flex-col gap-4">
@@ -59,11 +81,12 @@ export default function DuplicateLayoutModal({ target, units, hasUnsavedChanges,
           </div>
         </div>
       )}
+      {error && <p className="text-error text-sm mt-3">{error}</p>}
       <div className="flex gap-3 mt-5">
         <button onClick={onClose} className="flex-1 border border-border rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-muted">
           Cancelar
         </button>
-        <button onClick={confirm} disabled={!source} className="flex-1 bg-primary text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+        <button onClick={() => void confirm()} disabled={!source || busy} className="flex-1 bg-primary text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
           <Copy size={14} />
           Duplicar planta
         </button>

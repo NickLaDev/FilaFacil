@@ -1,6 +1,6 @@
 import type { ElementType } from 'react';
 import { BookOpen, FileText, Map as MapIcon, QrCode, Tag, Users } from 'lucide-react';
-import type { PlanFeature } from '@/types/establishment';
+import type { PlanFeature } from '@filafacil/shared';
 
 export type ManagerSection = 'floor-plan' | 'waitlist' | 'qrcodes' | 'menu' | 'promotions' | 'recipes';
 
@@ -31,7 +31,7 @@ export const NAV_GROUPS: { label: string; items: SectionDefinition[] }[] = [
 
 /** Seções liberadas conforme o plano do estabelecimento (ficha 37); as demais estão em todos os planos. */
 export const SECTION_FEATURE: Partial<Record<ManagerSection, PlanFeature>> = {
-  'floor-plan': 'floor-plan',
+  'floor-plan': 'floor_plan',
   waitlist: 'waitlist',
   promotions: 'promotions',
   recipes: 'recipes',

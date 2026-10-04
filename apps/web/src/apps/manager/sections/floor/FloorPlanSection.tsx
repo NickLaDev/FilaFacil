@@ -1,14 +1,15 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Combine, Copy, Lock, Map as MapIcon, Plus, Users } from 'lucide-react';
+import { UNLIMITED } from '@filafacil/shared';
 import FloorCanvas, { MergeBlock, TableNode } from '@/components/floor/FloorCanvas';
 import { shortTableLabel } from '@/components/floor/tableStyles';
 import EmptyState from '@/components/ui/EmptyState';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
+import { errorMessage, isApiError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
-import { useOrganizationUnits } from '@/services/establishmentService';
-import { createFloorTable, mergeSummary, mergeTables, qrPrefixFromName, saveFloorLayout, unmergeTables } from '@/services/floorService';
-import { useEstablishmentPlan, useHasPlanFeature } from '@/services/planService';
-import { UNLIMITED } from '@/data/establishments';
-import type { FloorTable } from '@/types/floor';
+import { createFloorTable, fetchFloorLayout, mergeSummary, mergeTables, saveFloorLayout, unmergeTables, useFloorLayout } from '@/services/floorService';
+import { useEstablishmentPlan } from '@/services/planService';
+import type { FloorLayout, FloorTable } from '@/types/floor';
 import type { ManagerSectionProps } from '../../types';
 import DuplicateLayoutModal from './DuplicateLayoutModal';
 import TableInspector from './TableInspector';
@@ -19,11 +20,18 @@ const KEYBOARD_STEP_FAST = 5;
 const ARROW_DELTAS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
 /** Fichas 20, 47 e 61: editor visual da planta, mesclagem de mesas e duplicação entre unidades. */
-export default function FloorPlanSection({ unit, notify }: ManagerSectionProps) {
-  const { draft, setDraft, dirty, reset, updateTable, removeTable } = useFloorDraft(unit.id);
-  const plan = useEstablishmentPlan(unit.id);
-  const canDuplicate = useHasPlanFeature(unit.id, 'layout-duplication');
-  const units = useOrganizationUnits(unit.organizationId);
+export default function FloorPlanSection(props: ManagerSectionProps) {
+  const { layout, error, refetch } = useFloorLayout(props.unit.id);
+  if (error) return <ErrorBlock error={error} onRetry={() => void refetch()} />;
+  if (!layout) return <LoadingBlock />;
+  return <FloorEditor {...props} saved={layout} />;
+}
+
+function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { saved: FloorLayout }) {
+  const { draft, setDraft, dirty, baseVersion, reset, updateTable, removeTable } = useFloorDraft(saved);
+  const plan = useEstablishmentPlan(unit.id).data;
+  const canDuplicate = plan?.features.includes('layout_duplication') ?? false;
+  const [saving, setSaving] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedMergeId, setSelectedMergeId] = useState<string | null>(null);
   const [mergeMode, setMergeMode] = useState(false);
@@ -43,7 +51,7 @@ export default function FloorPlanSection({ unit, notify }: ManagerSectionProps) 
   }
 
   function addTable() {
-    const table = createFloorTable(draft.tables, qrPrefixFromName(unit.name));
+    const table = createFloorTable(draft.tables);
     setDraft(prev => ({ ...prev, tables: [...prev.tables, table] }));
     setSelectedMergeId(null);
     setSelectedIds([table.id]);
@@ -101,17 +109,34 @@ export default function FloorPlanSection({ unit, notify }: ManagerSectionProps) 
     setSelectedMergeId(null);
   }
 
-  function save() {
+  async function save() {
     const labels = draft.tables.map(t => t.label.trim().toLowerCase());
     if (labels.some(label => !label)) return setError('Todas as mesas precisam de um nome.');
     if (new Set(labels).size !== labels.length) return setError('Existem mesas com o mesmo nome.');
-    saveFloorLayout(unit.id, { tables: draft.tables.map(t => ({ ...t, label: t.label.trim() })), merges: draft.merges });
-    setError('');
-    notify('Planta salva — o mapa do atendente já foi atualizado');
+    setSaving(true);
+    try {
+      const savedLayout = await saveFloorLayout(unit.id, {
+        version: baseVersion,
+        tables: draft.tables.map(t => ({ ...t, label: t.label.trim() })),
+        merges: draft.merges,
+      });
+      reset(savedLayout);
+      clearSelection();
+      setError('');
+      notify('Planta salva — o mapa do atendente já foi atualizado');
+    } catch (failure) {
+      setError(
+        isApiError(failure, 'FLOOR_PLAN_CONFLICT')
+          ? 'Outra pessoa salvou a planta enquanto você editava. Descarte para carregar a versão atual.'
+          : errorMessage(failure, 'Não foi possível salvar a planta.'),
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function discard() {
-    reset();
+  async function discard() {
+    reset(await fetchFloorLayout(unit.id));
     clearSelection();
     setError('');
   }
@@ -161,11 +186,11 @@ export default function FloorPlanSection({ unit, notify }: ManagerSectionProps) 
 
         <div className="ml-auto flex items-center gap-2">
           {dirty && <span className="text-xs font-medium text-warning">Alterações não salvas</span>}
-          <button onClick={discard} disabled={!dirty} className="border border-border text-muted-foreground px-4 py-2 rounded-xl text-sm hover:bg-muted disabled:opacity-50">
+          <button onClick={() => void discard()} disabled={!dirty && !error} className="border border-border text-muted-foreground px-4 py-2 rounded-xl text-sm hover:bg-muted disabled:opacity-50">
             Descartar
           </button>
-          <button onClick={save} disabled={!dirty} className="bg-success text-white px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
-            Salvar layout
+          <button onClick={() => void save()} disabled={!dirty || saving} className="bg-success text-white px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
+            {saving ? 'Salvando…' : 'Salvar layout'}
           </button>
         </div>
       </div>
@@ -267,8 +292,8 @@ export default function FloorPlanSection({ unit, notify }: ManagerSectionProps) 
           units={units}
           hasUnsavedChanges={dirty}
           onClose={() => setShowDuplicate(false)}
-          onDuplicated={sourceName => {
-            reset();
+          onDuplicated={async sourceName => {
+            reset(await fetchFloorLayout(unit.id));
             clearSelection();
             notify(`Planta de ${sourceName} copiada para ${unit.name}`);
           }}

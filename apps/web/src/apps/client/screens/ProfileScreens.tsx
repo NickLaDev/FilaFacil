@@ -3,7 +3,9 @@ import { Check, ChevronRight, Heart, MapPin, Plus, ShieldCheck, ShoppingBag, Tra
 import { cn, getInitials } from '@/lib/utils';
 import { formatPhone, isValidEmail, isValidPhone } from '@/lib/validation';
 import BottomSheet from '@/components/ui/BottomSheet';
-import { deleteAddress, logout, saveAddress, setDefaultAddress, updateProfile } from '@/services/authService';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
+import { errorMessage, isApiError } from '@/lib/api/client';
+import { deleteAddress, saveAddress, setDefaultAddress, updateProfile, useAddresses } from '@/services/profileService';
 import { useClient } from '../clientContext';
 import { FixedBottom, ScreenHeader } from '../components/Layout';
 import { TextField } from '../components/AuthFields';
@@ -34,12 +36,13 @@ function MenuGroup({ title, items }: { title: string; items: { icon: LucideIcon;
 
 /** Dados pessoais e atalhos para pedidos, favoritos e endereços (fichas 13 e 45). */
 export function ProfileScreen() {
-  const { go, account, isVisitor } = useClient();
+  const { go, account, isVisitor, signOut } = useClient();
   const [logoutSheet, setLogoutSheet] = useState(false);
 
-  function confirmLogout() {
-    logout();
+  async function confirmLogout() {
     setLogoutSheet(false);
+    // Encerra a sessão no servidor (refresh token revogado), não só no aparelho.
+    await signOut();
     go('welcome');
   }
 
@@ -55,8 +58,8 @@ export function ProfileScreen() {
             <p className="font-display font-bold text-foreground text-base leading-tight">{account?.name ?? 'Visitante'}</p>
             {account ? (
               <>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">{[account.email, account.phone].filter(Boolean).join(' · ')}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">CPF {account.cpfMasked}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">{[account.email, account.phone && formatPhone(account.phone)].filter(Boolean).join(' · ')}</p>
+                {account.cpfMasked && <p className="text-[11px] text-muted-foreground mt-0.5">CPF {account.cpfMasked}</p>}
               </>
             ) : (
               <p className="text-xs text-muted-foreground mt-0.5">Conta de visitante</p>
@@ -95,7 +98,7 @@ export function ProfileScreen() {
           <p className="font-display font-bold text-foreground text-lg text-center mb-2">Deseja sair da sua conta?</p>
           <p className="text-muted-foreground text-sm text-center mb-6">Você precisará entrar novamente para fazer pedidos.</p>
           <div className="flex flex-col gap-3">
-            <button onClick={confirmLogout} className="w-full bg-error text-white font-display font-semibold py-4 rounded-xl">Sair</button>
+            <button onClick={() => void confirmLogout()} className="w-full bg-error text-white font-display font-semibold py-4 rounded-xl">Sair</button>
             <button onClick={() => setLogoutSheet(false)} className="w-full text-muted-foreground text-sm py-3">Cancelar</button>
           </div>
         </BottomSheet>
@@ -109,9 +112,11 @@ export function EditProfileScreen() {
   const [firstName, ...rest] = account?.name.split(' ') ?? [''];
   const [first, setFirst] = useState(firstName ?? '');
   const [last, setLast] = useState(rest.join(' '));
-  const [phone, setPhone] = useState(account?.phone ?? '');
+  const [phone, setPhone] = useState(account?.phone ? formatPhone(account.phone) : '');
   const [email, setEmail] = useState(account?.email ?? '');
   const [submitted, setSubmitted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [serverError, setServerError] = useState<{ field: 'email' | 'phone' | 'form'; message: string } | null>(null);
 
   if (!account) return null;
   const errors = {
@@ -122,13 +127,23 @@ export function EditProfileScreen() {
   };
   const hasErrors = Object.values(errors).some(Boolean);
 
-  function save() {
+  /** Ficha 13: salvo no servidor, vale na hora em qualquer aparelho e nos próximos pedidos. */
+  async function save() {
     setSubmitted(true);
+    setServerError(null);
     if (!account || hasErrors) return;
-    const contactChanged = email.trim() !== account.email || phone !== account.phone;
-    updateProfile(account.id, { name: `${first.trim()} ${last.trim()}`.trim(), email: email.trim(), phone });
-    showToast(contactChanged ? 'Dados salvos — confirme o novo contato' : 'Dados salvos');
-    go('profile');
+    setSaving(true);
+    try {
+      const updated = await updateProfile({ name: `${first.trim()} ${last.trim()}`.trim(), email: email.trim(), phone });
+      const contactChanged = updated.user.email !== account.email || updated.user.phone !== account.phone;
+      showToast(contactChanged ? 'Dados salvos — confirme o novo contato' : 'Dados salvos');
+      go('profile');
+    } catch (failure) {
+      const field = isApiError(failure, 'EMAIL_IN_USE') ? 'email' : isApiError(failure, 'PHONE_IN_USE') ? 'phone' : 'form';
+      setServerError({ field, message: errorMessage(failure) });
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -138,13 +153,16 @@ export function EditProfileScreen() {
         <TextField label="Nome" value={first} onChange={setFirst} autoComplete="given-name" error={submitted ? errors.first : undefined} />
         <TextField label="Sobrenome" value={last} onChange={setLast} autoComplete="family-name" />
         <TextField label="Celular" value={phone} onChange={value => setPhone(formatPhone(value))} type="tel" inputMode="tel" autoComplete="tel"
-          error={submitted ? errors.phone : undefined} hint="Alterar o celular exige nova verificação" />
+          error={(submitted ? errors.phone : undefined) ?? (serverError?.field === 'phone' ? serverError.message : undefined)} hint="Alterar o celular exige nova verificação" />
         <TextField label="E-mail" value={email} onChange={setEmail} type="email" autoComplete="email"
-          error={submitted ? errors.email ?? errors.contact : undefined} hint="Alterar o e-mail exige nova verificação" />
-        <p className="text-xs text-muted-foreground">CPF {account.cpfMasked} · para alterar o CPF, fale com o suporte.</p>
+          error={(submitted ? errors.email ?? errors.contact : undefined) ?? (serverError?.field === 'email' ? serverError.message : undefined)} hint="Alterar o e-mail exige nova verificação" />
+        {serverError?.field === 'form' && <p className="text-error text-sm">{serverError.message}</p>}
+        {account.cpfMasked && <p className="text-xs text-muted-foreground">CPF {account.cpfMasked} · para alterar o CPF, fale com o suporte.</p>}
       </div>
       <FixedBottom>
-        <button onClick={save} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl">Salvar alterações</button>
+        <button onClick={() => void save()} disabled={saving} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl disabled:opacity-60">
+          {saving ? 'Salvando…' : 'Salvar alterações'}
+        </button>
       </FixedBottom>
     </div>
   );
@@ -152,26 +170,43 @@ export function EditProfileScreen() {
 
 export function AddressesScreen() {
   const { go, account, showToast } = useClient();
+  const addresses = useAddresses(Boolean(account));
   const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ label: '', street: '', city: '' });
 
   if (!account) return null;
-  const canSave = form.label.trim() && form.street.trim() && form.city.trim();
+  const canSave = form.label.trim() && form.street.trim().length >= 3 && form.city.trim().length >= 2;
 
-  function addAddress() {
-    if (!account || !canSave) return;
-    saveAddress(account.id, { label: form.label.trim(), street: form.street.trim(), city: form.city.trim() });
+  async function run(action: () => Promise<unknown>, success: string) {
+    try {
+      await action();
+      showToast(success);
+      return true;
+    } catch (failure) {
+      showToast(errorMessage(failure));
+      return false;
+    }
+  }
+
+  async function addAddress() {
+    if (!canSave) return;
+    setSaving(true);
+    const ok = await run(() => saveAddress({ label: form.label.trim(), street: form.street.trim(), city: form.city.trim() }), 'Endereço salvo');
+    setSaving(false);
+    if (!ok) return;
     setForm({ label: '', street: '', city: '' });
     setAdding(false);
-    showToast('Endereço salvo');
   }
 
   return (
     <div className="min-h-screen bg-background flex flex-col pb-24">
       <ScreenHeader title="Endereços" onBack={() => go('profile')} />
       <div className="px-5 py-5 flex flex-col gap-3">
-        {account.addresses.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Nenhum endereço salvo.</p>}
-        {account.addresses.map(address => (
+        {addresses.error && <ErrorBlock error={addresses.error} onRetry={() => void addresses.refetch()} className="py-6" />}
+        {addresses.isPending && <LoadingBlock className="py-6" />}
+        {addresses.data?.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Nenhum endereço salvo.</p>}
+        {addresses.data?.map(address => (
           <div key={address.id} className={cn('bg-card border rounded-xl p-4 flex items-start gap-4', address.isDefault ? 'border-primary/30' : 'border-border')}>
             <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center flex-shrink-0 mt-0.5">
               <MapPin size={18} className="text-muted-foreground" />
@@ -184,11 +219,11 @@ export function AddressesScreen() {
               <p className="text-sm text-muted-foreground mt-0.5">{address.street}</p>
               <p className="text-xs text-muted-foreground">{address.city}</p>
               {!address.isDefault && (
-                <button onClick={() => setDefaultAddress(account.id, address.id)} className="text-primary text-xs font-medium mt-1.5">Definir como padrão</button>
+                <button onClick={() => void run(() => setDefaultAddress(address.id), 'Endereço padrão atualizado')} className="text-primary text-xs font-medium mt-1.5">Definir como padrão</button>
               )}
             </div>
             <button
-              onClick={() => { deleteAddress(account.id, address.id); showToast('Endereço removido'); }}
+              onClick={() => void run(() => deleteAddress(address.id), 'Endereço removido')}
               className="p-1.5 hover:bg-muted rounded-lg"
               aria-label={`Remover endereço ${address.label}`}
             >
@@ -209,7 +244,7 @@ export function AddressesScreen() {
             <TextField label="Nome do endereço" value={form.label} onChange={label => setForm(prev => ({ ...prev, label: label.slice(0, 30) }))} placeholder="Ex: Casa, Trabalho" />
             <TextField label="Rua e número" value={form.street} onChange={street => setForm(prev => ({ ...prev, street: street.slice(0, 120) }))} autoComplete="street-address" />
             <TextField label="Cidade / UF" value={form.city} onChange={city => setForm(prev => ({ ...prev, city: city.slice(0, 60) }))} placeholder="Ex: Campinas, SP" />
-            <button onClick={addAddress} disabled={!canSave} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
+            <button onClick={() => void addAddress()} disabled={!canSave || saving} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2">
               <Check size={16} />
               Salvar endereço
             </button>

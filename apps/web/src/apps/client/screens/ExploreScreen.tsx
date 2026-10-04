@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ArrowUpDown, Check, ChevronLeft, Clock, Heart, List, Map as MapIcon, MapPin, QrCode, Search, SlidersHorizontal, X } from 'lucide-react';
+import { imageOrPlaceholder } from '@/lib/images';
 import { cn } from '@/lib/utils';
-import { usePublicEstablishments } from '@/services/establishmentService';
-import { useClientLocation } from '@/services/deviceService';
+import { useClientLocation, type Coordinates } from '@/services/deviceService';
+import { useNearbyRestaurants, type Restaurant } from '@/services/restaurantService';
+import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import Toggle from '@/components/ui/Toggle';
-import type { Establishment } from '@/types/establishment';
 import { useClient } from '../clientContext';
 import { useFavorites } from '../hooks/useFavorites';
 import RestaurantCard, { StatusBadge } from '../components/RestaurantCard';
@@ -28,15 +29,16 @@ interface SheetFilters {
 
 const DEFAULT_FILTERS: SheetFilters = { openNow: false, accepting: false, distance: 'any', wait: 'any', categories: new Set() };
 
-const SORTERS: Record<SortOption, (a: Establishment, b: Establishment) => number> = {
-  'Mais próximos': (a, b) => a.distanceM - b.distanceM,
-  'Menor espera': (a, b) => a.avgWaitMin - b.avgWaitMin,
+/** Distância e espera já vêm ordenadas pelo servidor; avaliação é ordenada aqui. */
+const SORTERS: Record<SortOption, ((a: Restaurant, b: Restaurant) => number) | null> = {
+  'Mais próximos': null,
+  'Menor espera': null,
   'Melhor avaliados': (a, b) => b.rating - a.rating,
 };
 
-function matchesFilters(r: Establishment, query: string, quick: QuickFilter, filters: SheetFilters, favoriteIds: Set<string>) {
+function matchesFilters(r: Restaurant, query: string, quick: QuickFilter, filters: SheetFilters, favoriteIds: Set<string>) {
   const q = query.trim().toLowerCase();
-  const matchesQuery = !q || [r.name, r.type, ...r.tags, ...r.foodCategories].some(text => text.toLowerCase().includes(q));
+  const matchesQuery = !q || [r.name, r.typeLabel, ...r.tags, ...r.foodCategories].some(text => text.toLowerCase().includes(q));
   const closed = r.orderingStatus === 'closed';
   return (
     matchesQuery &&
@@ -45,8 +47,8 @@ function matchesFilters(r: Establishment, query: string, quick: QuickFilter, fil
     (quick !== 'Menor espera' || !closed) &&
     (!filters.openNow || !closed) &&
     (!filters.accepting || r.orderingStatus === 'open' || r.orderingStatus === 'busy') &&
-    (filters.distance === 'any' || r.distanceM <= Number(filters.distance) * 1000) &&
-    (filters.wait === 'any' || r.avgWaitMin <= Number(filters.wait)) &&
+    (filters.distance === 'any' || (r.distanceM ?? 0) <= Number(filters.distance) * 1000) &&
+    (filters.wait === 'any' || r.averageWaitMinutes <= Number(filters.wait)) &&
     // Várias categorias ao mesmo tempo: basta o local ter uma delas (ficha 60).
     (filters.categories.size === 0 || r.foodCategories.some(category => filters.categories.has(category)))
   );
@@ -55,7 +57,6 @@ function matchesFilters(r: Establishment, query: string, quick: QuickFilter, fil
 /** Busca por proximidade com filtros, mapa e aba de favoritos (fichas 11, 45 e 60). */
 export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilter?: QuickFilter }) {
   const { go, openEstablishment } = useClient();
-  const establishments = usePublicEstablishments();
   const location = useClientLocation();
   const { favoriteIds, toggle: toggleFavorite, canFavorite } = useFavorites();
 
@@ -67,15 +68,22 @@ export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilt
   const [showFilters, setShowFilters] = useState(false);
   const [showSort, setShowSort] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
-  const [mapPin, setMapPin] = useState<Establishment | null>(null);
-
-  const allCategories = useMemo(() => [...new Set(establishments.flatMap(e => e.foodCategories))].sort(), [establishments]);
+  const [mapPin, setMapPin] = useState<Restaurant | null>(null);
 
   const effectiveSort: SortOption = quickFilter === 'Menor espera' ? 'Menor espera' : quickFilter === 'Mais próximos' ? 'Mais próximos' : sortBy;
-  const results = useMemo(
-    () => establishments.filter(r => matchesFilters(r, query, quickFilter, filters, favoriteIds)).sort(SORTERS[effectiveSort]),
-    [establishments, query, quickFilter, filters, favoriteIds, effectiveSort],
-  );
+  // Ficha 11: ordenação por distância/espera e "aberto agora" calculados pelo servidor (horário no fuso da casa).
+  const search = useNearbyRestaurants({
+    openNow: quickFilter === 'Aberto agora' || filters.openNow,
+    sort: effectiveSort === 'Menor espera' ? 'wait' : 'distance',
+  });
+  const establishments = useMemo(() => search.data ?? [], [search.data]);
+  const allCategories = useMemo(() => [...new Set(establishments.flatMap(e => e.foodCategories))].sort(), [establishments]);
+
+  const results = useMemo(() => {
+    const filtered = establishments.filter(r => matchesFilters(r, query, quickFilter, filters, favoriteIds));
+    const sorter = SORTERS[effectiveSort];
+    return sorter ? [...filtered].sort(sorter) : filtered;
+  }, [establishments, query, quickFilter, filters, favoriteIds, effectiveSort]);
 
   const activeFiltersCount = [filters.openNow, filters.accepting, filters.distance !== 'any', filters.wait !== 'any', filters.categories.size > 0].filter(Boolean).length;
   const isFavoritesTab = quickFilter === 'Favoritos';
@@ -266,7 +274,11 @@ export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilt
         )}
       </div>
 
-      {viewMode === 'list' ? (
+      {search.error ? (
+        <ErrorBlock error={search.error} onRetry={() => void search.refetch()} />
+      ) : !search.data ? (
+        <LoadingBlock />
+      ) : viewMode === 'list' ? (
         <div className="flex-1 px-4 py-4 flex flex-col gap-3 pb-24">
           {isFavoritesTab && results.length === 0 ? (
             <FavoritesEmptyState signedIn={canFavorite} onExplore={() => setQuickFilter('Todos')} onLogin={() => go('login')} />
@@ -286,7 +298,7 @@ export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilt
           )}
         </div>
       ) : (
-        <MapView restaurants={results} selectedPin={mapPin} onPinSelect={setMapPin} onOpenRestaurant={r => openEstablishment(r.id)} />
+        <MapView center={location.coords} restaurants={results} selectedPin={mapPin} onPinSelect={setMapPin} onOpenRestaurant={r => openEstablishment(r.id)} />
       )}
     </div>
   );
@@ -333,14 +345,29 @@ function EmptyNearbyState({ onLocationChange, onQR }: { onLocationChange: () => 
 }
 
 interface MapViewProps {
-  restaurants: Establishment[];
-  selectedPin: Establishment | null;
-  onPinSelect: (restaurant: Establishment | null) => void;
-  onOpenRestaurant: (restaurant: Establishment) => void;
+  center: Coordinates;
+  restaurants: Restaurant[];
+  selectedPin: Restaurant | null;
+  onPinSelect: (restaurant: Restaurant | null) => void;
+  onOpenRestaurant: (restaurant: Restaurant) => void;
 }
 
-/** Mapa simulado: o SDK de mapas entra junto com a geolocalização real do backend. */
-function MapView({ restaurants, selectedPin, onPinSelect, onOpenRestaurant }: MapViewProps) {
+const MAP_MARGIN = 10;
+
+/**
+ * Posição de cada local em % do mapa, a partir das coordenadas reais e centrada no cliente.
+ * O fundo é ilustrativo (sem SDK de mapas pago); a geometria relativa é real.
+ */
+function mapPosition(center: Coordinates, restaurant: Restaurant, scale: number) {
+  const dx = (restaurant.longitude - center.lng) * Math.cos((center.lat * Math.PI) / 180);
+  const dy = restaurant.latitude - center.lat;
+  const clamp = (value: number) => Math.min(100 - MAP_MARGIN, Math.max(MAP_MARGIN, value));
+  return { x: clamp(50 + (dx / scale) * (50 - MAP_MARGIN)), y: clamp(50 - (dy / scale) * (50 - MAP_MARGIN)) };
+}
+
+function MapView({ center, restaurants, selectedPin, onPinSelect, onOpenRestaurant }: MapViewProps) {
+  const cosLat = Math.cos((center.lat * Math.PI) / 180);
+  const scale = Math.max(0.002, ...restaurants.map(r => Math.max(Math.abs(r.latitude - center.lat), Math.abs((r.longitude - center.lng) * cosLat))));
   return (
     <div className="flex-1 relative min-h-[480px]">
       <div className="absolute inset-0 bg-[#E8E3DC] overflow-hidden">
@@ -365,12 +392,13 @@ function MapView({ restaurants, selectedPin, onPinSelect, onOpenRestaurant }: Ma
         {restaurants.map(r => {
           const isSelected = selectedPin?.id === r.id;
           const closed = r.orderingStatus === 'closed';
+          const position = mapPosition(center, r, scale);
           return (
             <button
               key={r.id}
               onClick={() => onPinSelect(isSelected ? null : r)}
               className="absolute transition-transform"
-              style={{ left: `${r.mapPosition.x}%`, top: `${r.mapPosition.y}%`, transform: 'translate(-50%,-100%)' }}
+              style={{ left: `${position.x}%`, top: `${position.y}%`, transform: 'translate(-50%,-100%)' }}
             >
               <div className={cn(
                 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full font-display font-bold text-xs shadow-lg whitespace-nowrap transition-all',
@@ -388,10 +416,10 @@ function MapView({ restaurants, selectedPin, onPinSelect, onOpenRestaurant }: Ma
       {selectedPin && (
         <div className="absolute bottom-20 left-4 right-4 bg-card rounded-2xl shadow-2xl border border-border overflow-hidden">
           <div className="flex gap-3 p-4">
-            <img src={selectedPin.images[0]} alt={selectedPin.name} className="w-20 h-20 rounded-xl object-cover bg-muted flex-shrink-0" />
+            <img src={imageOrPlaceholder(selectedPin.images[0])} alt={selectedPin.name} className="w-20 h-20 rounded-xl object-cover bg-muted flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="font-display font-semibold text-foreground">{selectedPin.name}</p>
-              <p className="text-xs text-muted-foreground">{formatDistance(selectedPin.distanceM)} · {selectedPin.type}</p>
+              <p className="text-xs text-muted-foreground">{formatDistance(selectedPin.distanceM)} · {selectedPin.typeLabel}</p>
               <StatusBadge status={selectedPin.orderingStatus} highDemand={selectedPin.highDemand} />
               {selectedPin.orderingStatus !== 'closed' && (
                 <div className="flex items-center gap-1 mt-1">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, ChevronRight, Fingerprint, Loader2, Trash2 } from 'lucide-react';
 import Toggle from '@/components/ui/Toggle';
-import { deleteAccount, setBiometricEnabled, useDevice } from '@/services/authService';
+import { requestAccountDeletion, setBiometricEnabled, useDevice } from '@/services/accountExtrasService';
 import { isBiometricAvailable, requestBiometricAuth } from '@/services/deviceService';
 import { useClient } from '../clientContext';
 import { BackButton, ResultScreen, ScreenHeader } from '../components/Layout';
@@ -11,7 +11,7 @@ import CodeVerification from '../components/CodeVerification';
 /** Biometria como atalho opcional — o login tradicional continua disponível (ficha 59). */
 export function AccountSecurityScreen() {
   const { go, account, showToast } = useClient();
-  const { biometricAccountId } = useDevice();
+  const { biometricUserId } = useDevice();
   const [available, setAvailable] = useState<boolean | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -22,7 +22,7 @@ export function AccountSecurityScreen() {
   }, []);
 
   if (!account) return null;
-  const enabled = biometricAccountId === account.id;
+  const enabled = biometricUserId === account.id;
 
   async function toggleBiometrics(next: boolean) {
     if (!account) return;
@@ -72,7 +72,7 @@ export function AccountSecurityScreen() {
 
 type DeleteStep = 'info' | 'auth' | 'deleting' | 'done';
 
-/** Exclusão de conta e dados pessoais com autenticação adicional (ficha 53 · LGPD). */
+/** Exclusão de conta com autenticação adicional (ficha 53 · LGPD — Sprint 2, processamento ainda simulado). */
 export function DeleteAccountScreen() {
   const { go, account } = useClient();
   const [step, setStep] = useState<DeleteStep>('info');
@@ -82,7 +82,7 @@ export function DeleteAccountScreen() {
   async function confirmDeletion() {
     if (!account) return;
     setStep('deleting');
-    await deleteAccount(account.id);
+    await requestAccountDeletion();
     setStep('done');
   }
 
@@ -90,8 +90,8 @@ export function DeleteAccountScreen() {
     return (
       <ResultScreen
         icon={<div className="w-16 h-16 rounded-2xl bg-success-bg flex items-center justify-center"><Check size={28} className="text-success" /></div>}
-        title="Conta excluída"
-        description={<>Seus dados pessoais serão removidos ou anonimizados em até 30 dias. Enviamos a confirmação para <strong>{confirmationTarget}</strong>.</>}
+        title="Pedido de exclusão recebido"
+        description={<>Sua sessão foi encerrada. Os dados pessoais serão removidos ou anonimizados em até 30 dias, com confirmação para <strong>{confirmationTarget}</strong>.</>}
       >
         <button onClick={() => go('welcome')} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl">Voltar ao início</button>
       </ResultScreen>

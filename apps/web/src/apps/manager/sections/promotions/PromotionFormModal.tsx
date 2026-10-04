@@ -2,8 +2,10 @@ import { useState, type FormEvent } from 'react';
 import FormField, { PANEL_INPUT_CLASS } from '@/components/ui/FormField';
 import Modal from '@/components/ui/Modal';
 import { cn, formatCurrency } from '@/lib/utils';
-import { applyDiscount, savePromotion } from '@/services/menuService';
-import type { MenuItem, Promotion } from '@/types/catalog';
+import type { PromotionDto } from '@filafacil/shared';
+import { useAsyncAction } from '@/lib/useAsyncAction';
+import type { MenuItemView } from '@/services/menuService';
+import { applyDiscount, savePromotion } from '@/services/promotionService';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_DISCOUNT = 1;
@@ -17,15 +19,16 @@ function toDateTimeLocal(date: Date) {
 
 interface Props {
   establishmentId: string;
-  promotion?: Promotion;
-  items: MenuItem[];
+  promotion?: PromotionDto;
+  items: MenuItemView[];
+  notify: (message: string) => void;
   onClose: () => void;
-  onSaved: (message: string) => void;
 }
 
 type Errors = Partial<Record<'name' | 'items' | 'discount' | 'period', string>>;
 
-export default function PromotionFormModal({ establishmentId, promotion, items, onClose, onSaved }: Props) {
+export default function PromotionFormModal({ establishmentId, promotion, items, notify, onClose }: Props) {
+  const { run, pending } = useAsyncAction(notify);
   const [name, setName] = useState(promotion?.name ?? '');
   const [itemIds, setItemIds] = useState<string[]>(promotion?.itemIds ?? []);
   const [discount, setDiscount] = useState(String(promotion?.discountPercent ?? 10));
@@ -40,7 +43,7 @@ export default function PromotionFormModal({ establishmentId, promotion, items, 
     setItemIds(prev => (prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]));
   }
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const start = new Date(startsAt);
     const end = new Date(endsAt);
@@ -53,18 +56,22 @@ export default function PromotionFormModal({ establishmentId, promotion, items, 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
-    savePromotion(
-      establishmentId,
-      { name: name.trim(), itemIds, discountPercent: parsedDiscount, startsAt: start.toISOString(), endsAt: end.toISOString() },
-      promotion?.id,
+    // O horário digitado está no fuso do navegador; a API recebe e guarda em UTC.
+    const saved = await run(
+      () =>
+        savePromotion(
+          establishmentId,
+          { name: name.trim(), itemIds, discountPercent: parsedDiscount, startsAt: start.toISOString(), endsAt: end.toISOString() },
+          promotion?.id,
+        ),
+      promotion ? `Promoção ${name.trim()} atualizada` : `Promoção ${name.trim()} criada`,
     );
-    onSaved(promotion ? `Promoção ${name.trim()} atualizada` : `Promoção ${name.trim()} criada`);
-    onClose();
+    if (saved) onClose();
   }
 
   return (
     <Modal title={promotion ? 'Editar promoção' : 'Nova promoção'} onClose={onClose} width="md">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+      <form onSubmit={event => void handleSubmit(event)} className="flex flex-col gap-4" noValidate>
         <FormField label="Nome" htmlFor="promo-name" error={errors.name}>
           <input id="promo-name" value={name} onChange={e => setName(e.target.value)} maxLength={60} placeholder="Ex: Happy Hour" className={PANEL_INPUT_CLASS} />
         </FormField>
@@ -106,7 +113,7 @@ export default function PromotionFormModal({ establishmentId, promotion, items, 
           <button type="button" onClick={onClose} className="flex-1 border border-border rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-muted">
             Cancelar
           </button>
-          <button type="submit" className="flex-1 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold">
+          <button type="submit" disabled={pending} className="flex-1 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60">
             {promotion ? 'Salvar alterações' : 'Criar promoção'}
           </button>
         </div>

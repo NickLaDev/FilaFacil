@@ -1,6 +1,6 @@
 import { createPersistentStore, useStore } from '@/lib/store';
 
-// ─── Biometria (ficha 59) ───────────────────────────────────────────────────
+// ─── Biometria (ficha 59, Sprint 2 — ainda mockada) ─────────────────────────
 
 /** Verdadeiro quando o aparelho tem Face ID / Touch ID / leitor de digital disponível. */
 export async function isBiometricAvailable() {
@@ -12,8 +12,8 @@ export async function isBiometricAvailable() {
 }
 
 /**
- * Mock da leitura biométrica. Em produção: WebAuthn com challenge emitido pelo servidor
- * (ou bridge nativa no app), nunca validação só no cliente.
+ * Leitura biométrica simulada. O login de verdade exige WebAuthn com desafio emitido
+ * pelo servidor (Sprint 2); até lá a biometria não abre sessão.
  */
 export function requestBiometricAuth(): Promise<boolean> {
   return new Promise(resolve => setTimeout(() => resolve(true), 900));
@@ -21,25 +21,44 @@ export function requestBiometricAuth(): Promise<boolean> {
 
 // ─── Localização (ficha 11) ─────────────────────────────────────────────────
 
-interface ClientLocation {
-  label: string;
-  source: 'default' | 'device' | 'manual';
+export interface Coordinates {
+  lat: number;
+  lng: number;
 }
 
-const locationStore = createPersistentStore<ClientLocation>('client-location', { label: 'Campinas, SP', source: 'default' });
+export interface ClientLocation {
+  label: string;
+  source: 'default' | 'device' | 'manual';
+  coords: Coordinates;
+}
+
+/**
+ * Regiões que o cliente pode escolher sem GPS. Texto livre exigiria geocodificação por um
+ * serviço externo (não contratado nesta fase), então a escolha manual usa esta lista.
+ */
+export const KNOWN_REGIONS: { label: string; coords: Coordinates }[] = [
+  { label: 'Centro, Campinas', coords: { lat: -22.9056, lng: -47.0608 } },
+  { label: 'Cambuí, Campinas', coords: { lat: -22.8936, lng: -47.0517 } },
+  { label: 'Barão Geraldo, Campinas', coords: { lat: -22.8213, lng: -47.0794 } },
+  { label: 'Cidade Universitária, Campinas', coords: { lat: -22.8174, lng: -47.0689 } },
+  { label: 'Taquaral, Campinas', coords: { lat: -22.8745, lng: -47.0559 } },
+  { label: 'Bela Vista, São Paulo', coords: { lat: -23.5614, lng: -46.6559 } },
+];
+
+const DEFAULT_LOCATION: ClientLocation = { label: 'Campinas, SP', source: 'default', coords: KNOWN_REGIONS[0].coords };
+
+const locationStore = createPersistentStore<ClientLocation>('client-location-v2', DEFAULT_LOCATION);
 
 export const useClientLocation = () => useStore(locationStore);
 
-/**
- * Pede a localização do aparelho. As coordenadas seriam enviadas à busca do backend
- * (ordenação por distância); o mock só registra que a permissão foi concedida.
- */
+/** Pede a localização do aparelho; as coordenadas vão para a busca por distância no servidor. */
 export function requestDeviceLocation(): Promise<'granted' | 'denied' | 'unsupported'> {
   if (!('geolocation' in navigator)) return Promise.resolve('unsupported');
   return new Promise(resolve => {
     navigator.geolocation.getCurrentPosition(
-      () => {
-        locationStore.set({ label: 'Sua localização atual', source: 'device' });
+      position => {
+        const { latitude, longitude } = position.coords;
+        locationStore.set({ label: 'Sua localização atual', source: 'device', coords: { lat: latitude, lng: longitude } });
         resolve('granted');
       },
       () => resolve('denied'),
@@ -48,6 +67,11 @@ export function requestDeviceLocation(): Promise<'granted' | 'denied' | 'unsuppo
   });
 }
 
-export function setManualLocation(label: string) {
-  locationStore.set({ label, source: 'manual' });
+export function setManualLocation(region: (typeof KNOWN_REGIONS)[number]) {
+  locationStore.set({ label: region.label, source: 'manual', coords: region.coords });
+}
+
+export function findRegions(query: string) {
+  const normalized = query.trim().toLocaleLowerCase('pt-BR');
+  return normalized ? KNOWN_REGIONS.filter(region => region.label.toLocaleLowerCase('pt-BR').includes(normalized)) : KNOWN_REGIONS;
 }

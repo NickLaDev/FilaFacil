@@ -109,7 +109,7 @@ export default function TableInspector({ draft, selectedIds, selectedMerge, onUp
         />
       </FormField>
       <div className="text-xs text-muted-foreground">
-        QR Code: <span className="font-mono text-foreground">{table.qrCode}</span>
+        QR Code: <span className="font-mono text-foreground">{table.qrCode || 'gerado ao salvar'}</span>
       </div>
       {merge && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 flex flex-col gap-2">

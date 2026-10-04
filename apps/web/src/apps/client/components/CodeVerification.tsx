@@ -2,13 +2,15 @@ import { useRef, useState, type KeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn, formatCountdown } from '@/lib/utils';
 import { useCountdown } from '@/lib/hooks';
-import { DEMO_VERIFICATION_CODE } from '@/data/users';
-import { RESEND_COOLDOWN_SECONDS, verifyCode } from '@/services/authService';
+import { RESEND_COOLDOWN_SECONDS, SPRINT2_MOCK_CODE, verifyMockCode } from '@/services/accountExtrasService';
 
 const CODE_LENGTH = 6;
 const MAX_ATTEMPTS = 5;
 
 type CodeState = 'typing' | 'validating' | 'error' | 'too-many';
+
+/** Resultado da conferência do código (o servidor decide; aqui só mostramos o estado). */
+export type CodeCheck = 'ok' | 'invalid' | 'too-many';
 
 const ERROR_MESSAGES: Partial<Record<CodeState, string>> = {
   error: 'Código incorreto. Tente novamente.',
@@ -19,27 +21,38 @@ interface CodeVerificationProps {
   destination: string;
   onVerified: () => void;
   onChangeDestination?: () => void;
+  /** Conferência real (login por código). Sem ela, usa o fluxo simulado da Sprint 2. */
+  verify?: (code: string) => Promise<CodeCheck>;
+  /** Pede um novo código; lança erro (ex.: intervalo mínimo) para a tela avisar. */
+  resend?: () => Promise<void>;
+  /** Dica exibida só em desenvolvimento. */
+  devHint?: string;
+}
+
+async function mockVerify(code: string): Promise<CodeCheck> {
+  return (await verifyMockCode(code)) ? 'ok' : 'invalid';
 }
 
 /** Entrada de código de 6 dígitos com reenvio após tempo mínimo (fichas 06, 44, 53, 65). */
-export default function CodeVerification({ destination, onVerified, onChangeDestination }: CodeVerificationProps) {
+export default function CodeVerification({ destination, onVerified, onChangeDestination, verify = mockVerify, resend, devHint }: CodeVerificationProps) {
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(''));
   const [state, setState] = useState<CodeState>('typing');
   const [attempts, setAttempts] = useState(0);
-  const [resent, setResent] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const { secondsLeft, restart } = useCountdown(RESEND_COOLDOWN_SECONDS);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const locked = state === 'validating' || state === 'too-many';
 
   async function submit(code: string) {
     setState('validating');
-    if (await verifyCode(code)) {
+    const result = await verify(code).catch((): CodeCheck => 'invalid');
+    if (result === 'ok') {
       onVerified();
       return;
     }
     const nextAttempts = attempts + 1;
     setAttempts(nextAttempts);
-    setState(nextAttempts >= MAX_ATTEMPTS ? 'too-many' : 'error');
+    setState(result === 'too-many' || nextAttempts >= MAX_ATTEMPTS ? 'too-many' : 'error');
     setDigits(Array(CODE_LENGTH).fill(''));
     inputRefs.current[0]?.focus();
   }
@@ -60,13 +73,19 @@ export default function CodeVerification({ destination, onVerified, onChangeDest
     if (event.key === 'Backspace' && !digits[index] && index > 0) inputRefs.current[index - 1]?.focus();
   }
 
-  function handleResend() {
+  async function handleResend() {
+    try {
+      await resend?.();
+    } catch (error) {
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Não foi possível reenviar o código.' });
+      return;
+    }
     setDigits(Array(CODE_LENGTH).fill(''));
     setState('typing');
     setAttempts(0);
     restart();
-    setResent(true);
-    setTimeout(() => setResent(false), 3000);
+    setNotice({ tone: 'success', text: 'Código reenviado!' });
+    setTimeout(() => setNotice(null), 3000);
     inputRefs.current[0]?.focus();
   }
 
@@ -108,7 +127,7 @@ export default function CodeVerification({ destination, onVerified, onChangeDest
         </div>
       )}
       {ERROR_MESSAGES[state] && <p className="text-error text-sm">{ERROR_MESSAGES[state]}</p>}
-      {resent && <p className="text-success text-sm">Código reenviado!</p>}
+      {notice && <p className={cn('text-sm', notice.tone === 'success' ? 'text-success' : 'text-error')}>{notice.text}</p>}
 
       <div className="flex items-center gap-3 flex-wrap">
         {secondsLeft > 0 ? (
@@ -116,7 +135,7 @@ export default function CodeVerification({ destination, onVerified, onChangeDest
             Reenviar código em <strong>{formatCountdown(secondsLeft)}</strong>
           </p>
         ) : (
-          <button onClick={handleResend} className="text-primary text-sm font-medium">Reenviar código</button>
+          <button onClick={() => void handleResend()} className="text-primary text-sm font-medium">Reenviar código</button>
         )}
         {onChangeDestination && (
           <>
@@ -129,7 +148,12 @@ export default function CodeVerification({ destination, onVerified, onChangeDest
       {import.meta.env.DEV && (
         <div className="bg-muted rounded-xl p-4">
           <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">Dev:</strong> use o código <strong className="text-primary font-display">{DEMO_VERIFICATION_CODE}</strong>
+            <strong className="text-foreground">Dev:</strong>{' '}
+            {devHint ?? (
+              <>
+                fluxo simulado (Sprint 2) — use o código <strong className="text-primary font-display">{SPRINT2_MOCK_CODE}</strong>
+              </>
+            )}
           </p>
         </div>
       )}

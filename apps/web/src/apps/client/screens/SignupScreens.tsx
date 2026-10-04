@@ -1,29 +1,28 @@
 import { useState } from 'react';
 import { Check, Mail, ShieldAlert, Smartphone } from 'lucide-react';
+import { errorMessage, isApiError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { formatCpf, formatPhone, isStrongPassword, isValidCpf, isValidEmail, isValidPhone } from '@/lib/validation';
-import { findAccountByEmail, findAccountByPhone, isAccountVerified, isCpfRegistered, registerAccount } from '@/services/authService';
-import { useClient } from '../clientContext';
+import { registerAccount } from '@/services/authService';
+import { isAccountVerified, useClient } from '../clientContext';
 import { BackButton } from '../components/Layout';
 import { LoadingButton, PasswordField, PasswordRequirements, TermsCheckbox, TextField } from '../components/AuthFields';
 
-/** Passo 1: nome + CPF validado; CPF inválido ou repetido é barrado (ficha 01). */
+/**
+ * Passo 1: nome + CPF com dígitos verificadores válidos (ficha 01). A duplicidade é conferida
+ * pelo servidor no envio do cadastro — não existe consulta "este CPF tem conta?" aberta.
+ */
 export function SignupNameScreen() {
   const { go, signupDraft, setSignupDraft } = useClient();
   const [firstName, ...rest] = signupDraft.name.split(' ');
   const [first, setFirst] = useState(firstName ?? '');
   const [last, setLast] = useState(rest.join(' '));
   const [cpf, setCpf] = useState(signupDraft.cpf);
-  const [cpfError, setCpfError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [cpfError, setCpfError] = useState(signupDraft.serverError?.field === 'cpf' ? signupDraft.serverError.message : '');
 
-  async function handleContinue() {
+  function handleContinue() {
     if (!isValidCpf(cpf)) return setCpfError('CPF inválido. Confira os números digitados.');
-    setLoading(true);
-    const taken = await isCpfRegistered(cpf);
-    setLoading(false);
-    if (taken) return setCpfError('Este CPF já possui cadastro. Entre na sua conta.');
-    setSignupDraft({ ...signupDraft, name: `${first.trim()} ${last.trim()}`, cpf });
+    setSignupDraft({ ...signupDraft, name: `${first.trim()} ${last.trim()}`, cpf, serverError: undefined });
     go('signup-contact');
   }
 
@@ -54,7 +53,7 @@ export function SignupNameScreen() {
           )}
         </div>
         <div className="mt-auto">
-          <LoadingButton loading={loading} disabled={!first.trim() || !last.trim() || cpf.length < 14} onClick={handleContinue}>
+          <LoadingButton disabled={!first.trim() || !last.trim() || cpf.length < 14} onClick={handleContinue}>
             Continuar
           </LoadingButton>
         </div>
@@ -68,19 +67,23 @@ export function SignupContactScreen() {
   const [method, setMethod] = useState<'phone' | 'email'>(signupDraft.email ? 'email' : 'phone');
   const [phone, setPhone] = useState(signupDraft.phone);
   const [email, setEmail] = useState(signupDraft.email);
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
+  const [password, setPassword] = useState(signupDraft.password);
+  const [confirm, setConfirm] = useState(signupDraft.password);
+  const [error, setError] = useState(signupDraft.serverError?.field === 'contact' ? signupDraft.serverError.message : '');
 
   const canContinue = method === 'phone'
     ? isValidPhone(phone)
     : isValidEmail(email) && isStrongPassword(password) && password === confirm;
 
   function handleContinue() {
-    if (method === 'phone' && findAccountByPhone(phone)) return setError('Este celular já está em uso por outra conta.');
-    if (method === 'email' && findAccountByEmail(email)) return setError('Este e-mail já está em uso por outra conta.');
-    // A senha segue direto para o backend no cadastro real; não fica no estado do app.
-    setSignupDraft({ ...signupDraft, phone: method === 'phone' ? phone : '', email: method === 'email' ? email.trim() : '' });
+    // A senha fica só em memória até o envio do cadastro (nunca no armazenamento do navegador).
+    setSignupDraft({
+      ...signupDraft,
+      phone: method === 'phone' ? phone : '',
+      email: method === 'email' ? email.trim() : '',
+      password: method === 'email' ? password : '',
+      serverError: undefined,
+    });
     go('signup-terms');
   }
 
@@ -145,17 +148,38 @@ export function SignupContactScreen() {
 }
 
 export function SignupTermsScreen() {
-  const { go, signupDraft, requestVerification } = useClient();
+  const { go, signupDraft, setSignupDraft, requestVerification } = useClient();
   const [terms, setTerms] = useState(false);
   const [promo, setPromo] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   async function createAccount() {
     setLoading(true);
-    await registerAccount(signupDraft);
+    setError('');
+    try {
+      await registerAccount({
+        name: signupDraft.name,
+        cpf: signupDraft.cpf,
+        ...(signupDraft.email ? { email: signupDraft.email, password: signupDraft.password } : { phone: signupDraft.phone }),
+        marketingOptIn: promo,
+      });
+    } catch (failure) {
+      setLoading(false);
+      // CPF ou contato já cadastrado: volta ao passo certo com a mensagem do servidor.
+      if (isApiError(failure, 'CPF_ALREADY_REGISTERED') || isApiError(failure, 'INVALID_CPF')) {
+        setSignupDraft({ ...signupDraft, password: '', serverError: { field: 'cpf', message: failure.message } });
+        return go('signup-name');
+      }
+      if (isApiError(failure, 'EMAIL_IN_USE') || isApiError(failure, 'PHONE_IN_USE')) {
+        setSignupDraft({ ...signupDraft, password: '', serverError: { field: 'contact', message: failure.message } });
+        return go('signup-contact');
+      }
+      return setError(errorMessage(failure));
+    }
     setLoading(false);
     const channel = signupDraft.email ? 'email' : 'phone';
-    requestVerification({ purpose: 'signup', channel, destination: signupDraft.email || signupDraft.phone, returnTo: 'account-created' });
+    requestVerification({ purpose: 'signup', channel, destination: signupDraft.email || formatPhone(signupDraft.phone), returnTo: 'account-created' });
   }
 
   return (
@@ -177,8 +201,9 @@ export function SignupTermsScreen() {
           />
           <TermsCheckbox checked={promo} onChange={setPromo} label="Quero receber promoções e novidades." />
         </div>
+        {error && <p className="text-error text-sm">{error}</p>}
         <div className="mt-auto">
-          <LoadingButton loading={loading} disabled={!terms} onClick={createAccount}>Criar minha conta</LoadingButton>
+          <LoadingButton loading={loading} disabled={!terms} onClick={() => void createAccount()}>Criar minha conta</LoadingButton>
         </div>
       </div>
     </div>

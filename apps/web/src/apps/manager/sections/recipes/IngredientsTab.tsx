@@ -1,24 +1,24 @@
 import { useState } from 'react';
 import { Edit3, Package, Plus, Trash2 } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
-import { deleteIngredient } from '@/services/recipeService';
-import type { Ingredient, Recipe } from '@/types/catalog';
+import { useAsyncAction } from '@/lib/useAsyncAction';
+import { deleteIngredient, type IngredientView } from '@/services/recipeService';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import IngredientFormModal from './IngredientFormModal';
 import { formatUnitCost } from './recipeFormat';
 
 interface Props {
   establishmentId: string;
-  ingredients: Ingredient[];
-  recipes: Recipe[];
+  ingredients: IngredientView[];
   notify: (message: string) => void;
 }
 
-export default function IngredientsTab({ establishmentId, ingredients, recipes, notify }: Props) {
-  const [editing, setEditing] = useState<Ingredient | 'new' | null>(null);
-  const [deleting, setDeleting] = useState<Ingredient | null>(null);
+export default function IngredientsTab({ establishmentId, ingredients, notify }: Props) {
+  const [editing, setEditing] = useState<IngredientView | 'new' | null>(null);
+  const [deleting, setDeleting] = useState<IngredientView | null>(null);
+  const { run } = useAsyncAction(notify);
 
-  const usageCount = (ingredientId: string) => recipes.filter(r => r.lines.some(line => line.ingredientId === ingredientId)).length;
+  const usageCount = (ingredientId: string) => ingredients.find(i => i.id === ingredientId)?.usedInSheets ?? 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -78,7 +78,7 @@ export default function IngredientsTab({ establishmentId, ingredients, recipes, 
           establishmentId={establishmentId}
           ingredient={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
-          onSaved={notify}
+          notify={notify}
         />
       )}
       {deleting && (
@@ -90,10 +90,7 @@ export default function IngredientsTab({ establishmentId, ingredients, recipes, 
               : `"${deleting.name}" será removido da lista de insumos.`
           }
           confirmLabel="Excluir insumo"
-          onConfirm={() => {
-            deleteIngredient(deleting.id);
-            notify(`${deleting.name} excluído`);
-          }}
+          onConfirm={() => run(() => deleteIngredient(establishmentId, deleting.id), `${deleting.name} excluído`)}
           onClose={() => setDeleting(null)}
         />
       )}

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { AlertTriangle, Camera, QrCode, RefreshCw, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useEstablishment } from '@/services/establishmentService';
+import { useRestaurantData } from '@/services/restaurantService';
 import BottomSheet from '@/components/ui/BottomSheet';
 import { useClient } from '../clientContext';
 import { BackButton } from '../components/Layout';
@@ -18,8 +18,8 @@ function useExitScanner() {
 
 function SwitchRestaurantSheet({ target, onConfirm, onCancel }: { target: TableContext; onConfirm: () => void; onCancel: () => void }) {
   const { cartEstablishmentId } = useClient();
-  const current = useEstablishment(cartEstablishmentId);
-  const next = useEstablishment(target.establishmentId);
+  const current = useRestaurantData(cartEstablishmentId);
+  const next = useRestaurantData(target.establishmentId);
   return (
     <BottomSheet onClose={onCancel}>
       <div className="flex items-center gap-3 mb-4">
@@ -57,13 +57,12 @@ export function QRScannerScreen() {
   const { resolve, pendingSwitch, confirmSwitch, cancelSwitch } = useQrResolver();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [simulating, setSimulating] = useState(false);
-  const scanner = useQrScanner(videoRef, code => resolve(code), !pendingSwitch);
+  const scanner = useQrScanner(videoRef, code => void resolve(code), !pendingSwitch);
 
   function simulate(code: string) {
     setSimulating(true);
     setTimeout(() => {
-      setSimulating(false);
-      resolve(code);
+      void resolve(code).finally(() => setSimulating(false));
     }, 1000);
   }
 
@@ -157,12 +156,11 @@ export function ManualCodeScreen() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  function handleContinue() {
+  async function handleContinue() {
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      if (!resolve(code, { invalidScreen: false })) setError('Não encontramos esse código. Confira e tente novamente.');
-    }, 600);
+    const found = await resolve(code, { invalidScreen: false });
+    setLoading(false);
+    if (!found) setError('Não encontramos esse código. Confira e tente novamente.');
   }
 
   return (
@@ -239,7 +237,7 @@ export function QRInvalidScreen() {
 
 function useTableEstablishment() {
   const { table } = useClient();
-  return useEstablishment(table?.establishmentId);
+  return useRestaurantData(table?.establishmentId);
 }
 
 export function BarClosedScreen() {
@@ -277,7 +275,7 @@ export function BarClosedScreen() {
             </div>
             <p className="text-muted-foreground text-sm mt-2">Novos pedidos estão temporariamente indisponíveis.</p>
             <div className="mt-3 bg-muted rounded-xl px-4 py-3">
-              <p className="text-sm text-muted-foreground">{establishment.hours}</p>
+              <p className="text-sm text-muted-foreground">{establishment.hoursLabel}</p>
             </div>
           </div>
         </div>

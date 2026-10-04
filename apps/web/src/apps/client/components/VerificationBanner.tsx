@@ -1,6 +1,6 @@
 import { ChevronRight, ShieldAlert } from 'lucide-react';
-import { isAccountVerified } from '@/services/authService';
-import { useClient } from '../clientContext';
+import { formatPhone } from '@/lib/validation';
+import { isAccountVerified, useClient } from '../clientContext';
 import type { ClientScreen } from '../types';
 
 /** Contas não verificadas não pagam pelo app — aviso com atalho para confirmar (ficha 65). */
@@ -10,7 +10,7 @@ export default function VerificationBanner({ returnTo }: { returnTo: ClientScree
   const channel = account.email ? 'email' : 'phone';
   return (
     <button
-      onClick={() => requestVerification({ purpose: 'contact', channel, destination: account.email || account.phone, returnTo })}
+      onClick={() => requestVerification({ purpose: 'contact', channel, destination: account.email ?? formatPhone(account.phone ?? ''), returnTo })}
       className="w-full bg-warning-bg border border-warning/20 rounded-xl px-4 py-3 flex items-start gap-3 text-left"
     >
       <ShieldAlert size={16} className="text-warning flex-shrink-0 mt-0.5" />

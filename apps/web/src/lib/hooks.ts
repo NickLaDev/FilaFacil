@@ -20,3 +20,13 @@ export function useCountdown(initialSeconds: number) {
   }, [secondsLeft]);
   return { secondsLeft, restart: () => setSecondsLeft(initialSeconds) };
 }
+
+/** Valor que só muda depois de `delayMs` sem alterações (busca sem uma requisição por tecla). */
+export function useDebouncedValue<T>(value: T, delayMs = 300) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
+}
