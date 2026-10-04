@@ -1,3 +1,11 @@
 packages:
   - apps/*
   - packages/*
+
+# Dependências autorizadas a rodar scripts de instalação (o pnpm bloqueia o resto por padrão).
+allowBuilds:
+  argon2: true
+  esbuild: true
+  prisma: true
+  '@prisma/engines': true
+  '@scarf/scarf': false
