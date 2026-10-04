@@ -1,8 +1,6 @@
 import { resetDatabase } from '../helpers/database.js';
 import { createWorld, login, type World } from '../helpers/fixtures.js';
-import { createTestApp, CSRF, type TestApp } from '../helpers/test-app.js';
-
-type Agent = Awaited<ReturnType<typeof login>>;
+import { createTestApp, CSRF, type Agent, type TestApp } from '../helpers/test-app.js';
 
 describe('Planta, fila de espera e fichas técnicas (fichas 20, 21, 31)', () => {
   let t: TestApp;

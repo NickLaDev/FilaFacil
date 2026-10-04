@@ -30,13 +30,16 @@ export class CapturingSender {
   }
 }
 
+/** Cliente HTTP com cookie jar (um "navegador"). */
+export type Agent = ReturnType<typeof request.agent>;
+
 export interface TestApp {
   app: INestApplication;
   prisma: PrismaService;
   sms: CapturingSender;
   port: number;
   /** Cliente HTTP com cookie jar próprio (cada um é um "navegador"). */
-  browser: () => ReturnType<typeof request.agent>;
+  browser: () => Agent;
   close: () => Promise<void>;
 }
 

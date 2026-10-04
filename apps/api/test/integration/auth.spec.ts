@@ -35,7 +35,7 @@ describe('Autenticação (fichas 01 e 06)', () => {
       expect(response.status).toBe(201);
       expect(response.body.user).toMatchObject({ name: 'Maria Souza', email: 'maria@email.com', cpfMasked: '***.***.247-25', role: 'client' });
       expect(JSON.stringify(response.body)).not.toContain(VALID_CPF);
-      expect(response.headers['set-cookie']?.join(';')).toMatch(/ff_access=.*HttpOnly/);
+      expect(([] as string[]).concat(response.headers['set-cookie'] ?? []).join(';')).toMatch(/ff_access=.*HttpOnly/);
 
       const stored = await t.prisma.user.findUniqueOrThrow({ where: { email: 'maria@email.com' } });
       expect(stored.cpfHash).toMatch(/^[a-f0-9]{64}$/);

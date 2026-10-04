@@ -19,7 +19,8 @@ import { RealtimeService } from './realtime.service.js';
 import { rooms } from './rooms.js';
 
 interface SocketData {
-  auth?: AuthContext;
+  /** Resolvida no handshake; mensagens que chegam antes aguardam a autenticação terminar. */
+  auth?: Promise<AuthContext | null>;
 }
 
 function readCookie(header: string | undefined, name: string) {
@@ -49,17 +50,21 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
     this.realtime.attach(server);
   }
 
-  async handleConnection(socket: Socket) {
+  handleConnection(socket: Socket) {
+    (socket.data as SocketData).auth = this.authenticate(socket);
+  }
+
+  private async authenticate(socket: Socket): Promise<AuthContext | null> {
     const token = readCookie(socket.handshake.headers.cookie, ACCESS_COOKIE);
-    if (!token) return;
-    const payload = await this.tokens.verifyAccessToken(token);
-    if (!payload) return;
+    const payload = token ? await this.tokens.verifyAccessToken(token) : null;
+    if (!payload) return null;
     try {
       const auth = await this.sessions.authenticate(payload);
-      (socket.data as SocketData).auth = auth;
       await socket.join(rooms.user(auth.userId));
+      return auth;
     } catch {
       // Sessão inválida: segue como conexão anônima.
+      return null;
     }
   }
 
@@ -72,7 +77,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
       return { ok: true };
     }
     if (typeof establishmentId === 'string' && isUUID(establishmentId)) {
-      const auth = (socket.data as SocketData).auth;
+      const auth = await (socket.data as SocketData).auth;
       const allowed =
         auth &&
         STAFF_ROLES.includes(auth.role) &&

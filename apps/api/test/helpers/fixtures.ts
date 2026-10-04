@@ -1,8 +1,7 @@
-import type { TestAgent } from 'supertest';
 import { ROLE_DEFAULT_PERMISSIONS, type PlanFeature, type UserRole } from '@filafacil/shared';
 import type { PrismaService } from '../../src/database/prisma.service.js';
 import { PasswordHasher } from '../../src/modules/auth/password-hasher.service.js';
-import { CSRF } from './test-app.js';
+import { CSRF, type Agent } from './test-app.js';
 
 export const PASSWORD = 'Senha123';
 export const VALID_CPF = '52998224725';
@@ -75,7 +74,8 @@ export async function createWorld(prisma: PrismaService) {
 
 export type World = Awaited<ReturnType<typeof createWorld>>;
 
-export async function login(agent: TestAgent, email: string, password = PASSWORD) {
+export async function login(agent: Agent, email: string | null, password = PASSWORD) {
+  if (!email) throw new Error('Usuário de teste sem e-mail.');
   const response = await agent.post('/api/auth/login').set(CSRF).send({ email, password });
   if (response.status !== 200) throw new Error(`Login falhou para ${email}: ${response.status} ${JSON.stringify(response.body)}`);
   return agent;
