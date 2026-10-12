@@ -25,7 +25,7 @@ export class OAuthService {
     private readonly config: AppConfig,
   ) {}
 
-  status(): AuthProvidersResponse {
+  status(): Pick<AuthProvidersResponse, 'google' | 'apple'> {
     return { google: this.providers.has('google'), apple: this.providers.has('apple') };
   }
 

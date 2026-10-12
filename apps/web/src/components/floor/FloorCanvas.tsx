@@ -11,7 +11,7 @@ interface FloorCanvasProps {
   children: ReactNode;
 }
 
-/** Área da planta do salão (mesmo fundo do mapa simulado do protótipo). */
+/** Área da planta do salão . */
 export default function FloorCanvas({ canvasRef, editable, onBackgroundClick, children }: FloorCanvasProps) {
   const patternId = useId();
   return (

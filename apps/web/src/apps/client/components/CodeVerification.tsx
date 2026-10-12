@@ -2,8 +2,9 @@ import { useRef, useState, type KeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn, formatCountdown } from '@/lib/utils';
 import { useCountdown } from '@/lib/hooks';
-import { RESEND_COOLDOWN_SECONDS, SPRINT2_MOCK_CODE, verifyMockCode } from '@/services/accountExtrasService';
 
+/** Intervalo mínimo para reenviar um código (igual ao do servidor). */
+const RESEND_COOLDOWN_SECONDS = 42;
 const CODE_LENGTH = 6;
 const MAX_ATTEMPTS = 5;
 
@@ -21,20 +22,15 @@ interface CodeVerificationProps {
   destination: string;
   onVerified: () => void;
   onChangeDestination?: () => void;
-  /** Conferência real (login por código). Sem ela, usa o fluxo simulado da Sprint 2. */
-  verify?: (code: string) => Promise<CodeCheck>;
+  verify: (code: string) => Promise<CodeCheck>;
   /** Pede um novo código; lança erro (ex.: intervalo mínimo) para a tela avisar. */
   resend?: () => Promise<void>;
   /** Dica exibida só em desenvolvimento. */
   devHint?: string;
 }
 
-async function mockVerify(code: string): Promise<CodeCheck> {
-  return (await verifyMockCode(code)) ? 'ok' : 'invalid';
-}
-
-/** Entrada de código de 6 dígitos com reenvio após tempo mínimo (fichas 06, 44, 53, 65). */
-export default function CodeVerification({ destination, onVerified, onChangeDestination, verify = mockVerify, resend, devHint }: CodeVerificationProps) {
+/** Entrada de código de 6 dígitos com reenvio após tempo mínimo (fichas 06, 44, 53 e 65). */
+export default function CodeVerification({ destination, onVerified, onChangeDestination, verify, resend, devHint }: CodeVerificationProps) {
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(''));
   const [state, setState] = useState<CodeState>('typing');
   const [attempts, setAttempts] = useState(0);
@@ -145,15 +141,10 @@ export default function CodeVerification({ destination, onVerified, onChangeDest
         )}
       </div>
 
-      {import.meta.env.DEV && (
+      {import.meta.env.DEV && devHint && (
         <div className="bg-muted rounded-xl p-4">
           <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">Dev:</strong>{' '}
-            {devHint ?? (
-              <>
-                fluxo simulado (Sprint 2) — use o código <strong className="text-primary font-display">{SPRINT2_MOCK_CODE}</strong>
-              </>
-            )}
+            <strong className="text-foreground">Dev:</strong> {devHint}
           </p>
         </div>
       )}

@@ -38,6 +38,8 @@ export interface AuthUser {
   status: UserStatus;
   emailVerified: boolean;
   phoneVerified: boolean;
+  /** A conta tem senha (define se a exclusão pede senha ou código). */
+  hasPassword: boolean;
   permissions: Permission[];
   createdAt: string;
 }
@@ -64,9 +66,15 @@ export interface AddressDto {
   isDefault: boolean;
 }
 
+export type PaymentProviderId = 'mercadopago' | 'simulated' | 'none';
+
 export interface AuthProvidersResponse {
   google: boolean;
   apple: boolean;
+  /** Gateway de pagamento ativo; `simulated` = demonstração, sem valor financeiro. */
+  paymentProvider: PaymentProviderId;
+  /** Canais por onde a API consegue enviar códigos de verificação neste ambiente. */
+  codeChannels: Record<OtpChannel, boolean>;
 }
 
 export type OtpChannel = 'phone' | 'email';
@@ -118,6 +126,8 @@ export interface RestaurantSummary {
 export interface RestaurantDetail extends RestaurantSummary {
   timezone: string;
   openingHours: OpeningHourDto[];
+  /** Ficha 12: o botão "Reservar" só aparece com o recurso de fila no plano e o restaurante aberto. */
+  reservationsOpen: boolean;
 }
 
 export interface PublicPromotion {
@@ -138,6 +148,10 @@ export interface PublicMenuItem {
   finalPriceCents: number;
   imageUrl: string | null;
   promotion: PublicPromotion | null;
+  /** Um dos itens mais vendidos nos últimos 30 dias (ficha 46; recalculado toda semana). */
+  isTopOrdered: boolean;
+  /** Destaque manual do gestor (ficha 46). */
+  isHighlighted: boolean;
 }
 
 export interface PublicMenu {
@@ -163,6 +177,8 @@ export interface ManagedMenuItem {
   priceCents: number;
   imageUrl: string | null;
   available: boolean;
+  /** Destaque manual do gestor (ficha 46). */
+  highlighted: boolean;
   position: number;
   updatedAt: string;
 }
@@ -266,6 +282,36 @@ export interface WaitlistEntryDto {
   estimatedWaitMinutes: number | null;
   notifiedAt: string | null;
   notifiedTableLabel: string | null;
+  /** Entrou pelo botão "Reservar" do cliente (e não cadastrado pela equipe). */
+  byCustomer: boolean;
+}
+
+/** Ficha 12: a reserva do cliente (visão dele, sem dados de outros grupos). */
+export interface MyReservationDto {
+  id: string;
+  partySize: number;
+  position: number;
+  status: WaitlistStatus;
+  joinedAt: string;
+  quotedWaitMinutes: number;
+  estimatedWaitMinutes: number | null;
+  notifiedTableLabel: string | null;
+}
+
+/** Ficha 13: atalho "Minhas reservas" no perfil. */
+export interface MyReservationListItemDto extends MyReservationDto {
+  restaurantId: string;
+  restaurantName: string;
+}
+
+export interface MyReservationsDto {
+  items: MyReservationListItemDto[];
+}
+
+export interface MyReservationStateDto {
+  /** Cliente tem celular cadastrado (senão precisa informar um para ser avisado). */
+  hasPhone: boolean;
+  reservation: MyReservationDto | null;
 }
 
 export interface WaitlistDto {
@@ -327,6 +373,7 @@ export interface AdminEstablishmentDto {
   foodCategories: string[];
   tags: string[];
   averageWaitMinutes: number;
+  pickupPoint: string;
   ordersPaused: boolean;
   highDemand: boolean;
   rating: number;
@@ -388,6 +435,12 @@ export const REALTIME_EVENTS = {
   establishmentUpdated: 'establishment.updated',
   /** Sessão revogada (logout em outro lugar, suspensão): o app encerra o acesso na hora. */
   sessionRevoked: 'session.revoked',
+  /** Enviado ao conectar: diz se a conexão foi autenticada (sem isso o app não recebe eventos da conta). */
+  ready: 'realtime.ready',
+  /** Pedido criado, pago ou com status alterado: o dono e a equipe recarregam o pedido. */
+  orderUpdated: 'order.updated',
+  /** Qualquer mudança no mapa de mesas (chamado, ocupação, pagamento, reserva, mescla): a equipe recarrega o mapa. */
+  tablesUpdated: 'tables.updated',
 } as const;
 
 export type RealtimeEvent = (typeof REALTIME_EVENTS)[keyof typeof REALTIME_EVENTS];
@@ -400,5 +453,242 @@ export interface RealtimeSubscribeRequest {
 
 export interface RealtimePayload {
   establishmentId?: string;
+  orderId?: string;
+  /** Só em `realtime.ready`: a conexão tem sessão válida? */
+  authenticated?: boolean;
   reason?: string;
+}
+
+// ─── QR Code, pedidos e pagamentos (Sprint 2, bloco 1) ──────────────────────
+
+/** Mesa e estabelecimento identificados por um QR Code lido pelo cliente (ficha 02). */
+export interface QrResolveDto {
+  establishmentId: string;
+  establishmentName: string;
+  tableId: string;
+  tableLabel: string;
+  orderingStatus: OrderingStatus;
+  acceptingOrders: boolean;
+}
+
+export const ORDER_STATUSES = ['received', 'paid', 'preparing', 'ready', 'delivered', 'cancelled'] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+/** Próximos status que a equipe pode aplicar (o servidor valida a transição). */
+export const STAFF_ORDER_TRANSITIONS: Partial<Record<OrderStatus, OrderStatus>> = {
+  paid: 'preparing',
+  preparing: 'ready',
+  ready: 'delivered',
+};
+
+export const PAYMENT_METHODS = ['pix', 'credit', 'debit'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export type PaymentStatus = 'pending' | 'approved' | 'refused' | 'expired' | 'cancelled' | 'refunded';
+
+export const MAX_ORDER_LINE_QUANTITY = 20;
+export const MAX_ORDER_LINES = 30;
+
+export interface CreateOrderRequest {
+  establishmentId: string;
+  tableId?: string;
+  /** Identifica a tentativa de checkout: repetir o envio devolve o mesmo pedido. */
+  clientRequestId: string;
+  /** Total exibido ao cliente; se o servidor calcular outro valor, responde PRICE_CHANGED. */
+  expectedTotalCents?: number;
+  items: { menuItemId: string; quantity: number; notes?: string }[];
+}
+
+export interface OrderItemDto {
+  menuItemId: string;
+  name: string;
+  quantity: number;
+  unitPriceCents: number;
+  notes: string;
+}
+
+export interface PixPaymentDto {
+  copyPaste: string;
+  qrBase64: string | null;
+  expiresAt: string | null;
+}
+
+export interface PaymentDto {
+  id: string;
+  method: PaymentMethod;
+  status: PaymentStatus;
+  amountCents: number;
+  /** Identificador da transação no gateway (comprovante). */
+  transactionId: string | null;
+  /** Transação simulada (demonstração): não tem valor financeiro. */
+  simulated: boolean;
+  pix: PixPaymentDto | null;
+  failureReason: string | null;
+  approvedAt: string | null;
+  refundedAt: string | null;
+}
+
+export interface CreatePaymentRequest {
+  method: PaymentMethod;
+  /** Token do cartão gerado no navegador pelo SDK do gateway (nunca o número do cartão). */
+  cardToken?: string;
+  /** Bandeira/tipo do cartão informado pelo SDK (ex.: "visa"). */
+  paymentMethodId?: string;
+  /** Total que o cliente viu; se o pedido tiver outro valor, o servidor recusa (ORDER_TOTAL_CHANGED). */
+  expectedTotalCents?: number;
+}
+
+export interface OrderDto {
+  id: string;
+  number: number;
+  establishmentId: string;
+  establishmentName: string;
+  tableId: string | null;
+  tableLabel: string | null;
+  status: OrderStatus;
+  totalCents: number;
+  items: OrderItemDto[];
+  pickupPoint: string;
+  /** Só aparece quando o pedido está pronto ou entregue. */
+  pickupCode: string | null;
+  /** Estimativa de preparo informada pela casa; some quando o pedido está pronto. */
+  estimatedMinutes: number | null;
+  payment: PaymentDto | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffOrderDto extends OrderDto {
+  customerName: string;
+  /** Estorno pedido ao gateway e ainda sem confirmação: repetir o estorno é seguro. */
+  refundPending: boolean;
+}
+
+// ─── Sprint 2, blocos 2 e 3 ─────────────────────────────────────────────────
+
+/** Ficha 60: categorias de comida distintas dos estabelecimentos ativos. */
+export interface RestaurantCategoriesDto {
+  categories: string[];
+}
+
+/** Ficha 45. */
+export interface FavoritesDto {
+  items: RestaurantSummary[];
+}
+export interface FavoriteIdsDto {
+  ids: string[];
+}
+export interface FavoriteStateDto {
+  favorited: boolean;
+}
+
+// Ficha 16/47: mapa de mesas.
+export type TableState = 'free' | 'occupied' | 'reserved' | 'called';
+
+export interface TableCallDto {
+  id: string;
+  createdAt: string;
+}
+
+export interface TableReservationDto {
+  id: string;
+  name: string;
+  partySize: number;
+  reservedAt: string;
+}
+
+export interface TableMapTableDto {
+  id: string;
+  label: string;
+  shape: TableShape;
+  capacity: number;
+  x: number;
+  y: number;
+  qrCode: string;
+  status: TableState;
+  partySize: number;
+  since: string | null;
+  pendingCall: TableCallDto | null;
+  reservation: TableReservationDto | null;
+  /** Mesa mesclada: id do grupo (ficha 47). */
+  groupId: string | null;
+}
+
+/** Mesas mescladas aparecem como uma unidade (capacidade somada). */
+export interface TableMapGroupDto {
+  id: string;
+  tableIds: string[];
+  label: string;
+  capacity: number;
+  x: number;
+  y: number;
+  status: TableState;
+  partySize: number;
+  since: string | null;
+  pendingCall: TableCallDto | null;
+  reservation: TableReservationDto | null;
+}
+
+export interface TableMapDto {
+  establishmentId: string;
+  tables: TableMapTableDto[];
+  groups: TableMapGroupDto[];
+}
+
+export interface CreatedTableCallDto {
+  id: string;
+  tableId: string;
+  createdAt: string;
+}
+
+export interface TableCheckOrderDto {
+  id: string;
+  number: number;
+  tableLabel: string | null;
+  status: OrderStatus;
+  totalCents: number;
+  items: OrderItemDto[];
+}
+
+/** Conta consolidada de uma mesa ou de um grupo de mesas mescladas. */
+export interface TableCheckDto {
+  tableIds: string[];
+  label: string;
+  orders: TableCheckOrderDto[];
+  totalCents: number;
+  paidCents: number;
+}
+
+// Ficha 61.
+export interface LayoutDuplicationTargetDto {
+  id: string;
+  name: string;
+  tableCount: number;
+  eligible: boolean;
+  reason: string | null;
+}
+
+// Ficha 46.
+export interface MenuRankingItemDto {
+  menuItemId: string;
+  name: string;
+  quantity: number;
+  rank: number;
+  highlighted: boolean;
+}
+export interface MenuRankingDto {
+  calculatedAt: string | null;
+  items: MenuRankingItemDto[];
+}
+
+// Ficha 59: WebAuthn. `options`/`response` seguem o formato JSON do WebAuthn (@simplewebauthn).
+export interface WebAuthnOptionsDto {
+  challengeId: string;
+  options: Record<string, unknown>;
+}
+export interface PasskeyDto {
+  id: string;
+  deviceName: string;
+  createdAt: string;
+  lastUsedAt: string | null;
 }

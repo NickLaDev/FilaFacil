@@ -105,6 +105,13 @@ export class CreateEstablishmentDto {
   @Max(240)
   averageWaitMinutes?: number;
 
+  /** Onde o cliente retira o pedido pronto (ex.: "Balcão 2"). */
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @Length(1, 60)
+  pickupPoint?: string;
+
   @IsOptional()
   @IsBoolean()
   ordersPaused?: boolean;

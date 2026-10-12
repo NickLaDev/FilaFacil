@@ -1,6 +1,6 @@
 import { createPersistentStore, useStore } from '@/lib/store';
 
-// ─── Biometria (ficha 59, Sprint 2 — ainda mockada) ─────────────────────────
+// ─── Biometria (ficha 59) ───────────────────────────────────────────────────
 
 /** Verdadeiro quando o aparelho tem Face ID / Touch ID / leitor de digital disponível. */
 export async function isBiometricAvailable() {
@@ -12,12 +12,14 @@ export async function isBiometricAvailable() {
 }
 
 /**
- * Leitura biométrica simulada. O login de verdade exige WebAuthn com desafio emitido
- * pelo servidor (Sprint 2); até lá a biometria não abre sessão.
+ * Dica de interface: id da credencial biométrica cadastrada NESTE aparelho (atalho no login e estado do
+ * botão no perfil). Quem decide se a biometria vale é o servidor (credencial + desafio); apagar isto não abre acesso.
  */
-export function requestBiometricAuth(): Promise<boolean> {
-  return new Promise(resolve => setTimeout(() => resolve(true), 900));
-}
+const biometricHintStore = createPersistentStore<{ credentialId: string | null }>('biometric-hint-v2', { credentialId: null });
+
+export const useBiometricCredentialId = () => useStore(biometricHintStore).credentialId;
+export const useBiometricHint = () => Boolean(useStore(biometricHintStore).credentialId);
+export const setBiometricHint = (credentialId: string | null) => biometricHintStore.set({ credentialId });
 
 // ─── Localização (ficha 11) ─────────────────────────────────────────────────
 

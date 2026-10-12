@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { FloorLayout, FloorTable } from '@/types/floor';
 
-export type LayoutDraft = Pick<FloorLayout, 'tables' | 'merges'>;
+export type LayoutDraft = Pick<FloorLayout, 'tables'>;
 
 const MIN_POSITION = 4;
 const MAX_POSITION = 96;
 
 export const clampPosition = (value: number) => Math.round(Math.min(MAX_POSITION, Math.max(MIN_POSITION, value)));
 
-const toDraft = (layout: FloorLayout): LayoutDraft => ({ tables: layout.tables, merges: layout.merges });
+const toDraft = (layout: FloorLayout): LayoutDraft => ({ tables: layout.tables });
 
 /**
  * Edição acontece num rascunho; o atendente só vê a planta depois de "Salvar layout".
@@ -21,7 +21,7 @@ export function useFloorDraft(saved: FloorLayout) {
   const [lastSaved, setLastSaved] = useState(saved);
 
   const dirty = useMemo(
-    () => JSON.stringify(draft.tables) !== JSON.stringify(base.tables) || JSON.stringify(draft.merges) !== JSON.stringify(base.merges),
+    () => JSON.stringify(draft.tables) !== JSON.stringify(base.tables),
     [draft, base],
   );
 
@@ -47,14 +47,8 @@ export function useFloorDraft(saved: FloorLayout) {
     });
   }, []);
 
-  /** Remover uma mesa também a tira das mesclagens; grupos com menos de 2 mesas deixam de existir. */
   const removeTable = useCallback((id: string) => {
-    setDraft(prev => ({
-      tables: prev.tables.filter(t => t.id !== id),
-      merges: prev.merges
-        .map(merge => ({ ...merge, tableIds: merge.tableIds.filter(tableId => tableId !== id) }))
-        .filter(merge => merge.tableIds.length >= 2),
-    }));
+    setDraft(prev => ({ tables: prev.tables.filter(t => t.id !== id) }));
   }, []);
 
   return { draft, setDraft, dirty, baseVersion: base.version, reset, updateTable, removeTable };

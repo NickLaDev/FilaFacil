@@ -15,6 +15,9 @@ export function loadTestEnv() {
   process.env.THROTTLE_DISABLED = 'true';
   process.env.SMS_PROVIDER = 'dev';
   process.env.EMAIL_PROVIDER = 'dev';
+  // Pagamento: os testes não dependem do .env do desenvolvedor (nem do gateway simulado, nem do Mercado Pago).
+  process.env.PAYMENT_PROVIDER = 'none';
+  process.env.ALLOW_SIMULATED_PAYMENTS = 'false';
   process.env.GOOGLE_CLIENT_ID = '';
   process.env.GOOGLE_CLIENT_SECRET = '';
   process.env.APPLE_CLIENT_ID = '';

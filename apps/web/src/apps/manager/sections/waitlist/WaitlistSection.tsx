@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Bell, Check, ChevronDown, ChevronUp, Clock, Plus, Users, X } from 'lucide-react';
-import { buildFloorUnits, unitLiveState, type FloorUnit } from '@/components/floor/floorUnits';
+import { buildFloorUnits, type FloorUnit } from '@/components/floor/floorUnits';
 import { LIVE_STATUS_STYLE } from '@/components/floor/tableStyles';
 import EmptyState from '@/components/ui/EmptyState';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
@@ -8,7 +8,7 @@ import { useNow } from '@/lib/hooks';
 import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, formatTime } from '@/lib/utils';
 import { formatPhone } from '@/lib/validation';
-import { useFloorLayout, useTableLiveStates } from '@/services/floorService';
+import { useTableMap } from '@/services/floorService';
 import { moveInWaitlist, notifyParty, releaseTables, removeFromWaitlist, seatParty, useWaitlist } from '@/services/waitlistService';
 import type { ManagerSectionProps } from '../../types';
 import WaitlistEntryModal from './WaitlistEntryModal';
@@ -21,19 +21,18 @@ const MINUTE_MS = 60_000;
  */
 export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
   const waitlist = useWaitlist(unit.id);
-  const { layout } = useFloorLayout(unit.id);
-  const liveStates = useTableLiveStates(unit.id);
+  const { data: tableMap } = useTableMap(unit.id);
   const now = useNow(30_000);
   const { run } = useAsyncAction(notify);
   const [adding, setAdding] = useState(false);
 
-  const floorUnits = useMemo(() => (layout ? buildFloorUnits(layout) : []), [layout]);
+  const floorUnits = useMemo(() => (tableMap ? buildFloorUnits(tableMap) : []), [tableMap]);
 
   if (waitlist.error) return <ErrorBlock error={waitlist.error} onRetry={() => void waitlist.refetch()} />;
   if (!waitlist.data) return <LoadingBlock />;
 
   const entries = waitlist.data.entries;
-  const unitsWithState = floorUnits.map(floorUnit => ({ floorUnit, state: unitLiveState(floorUnit, liveStates) }));
+  const unitsWithState = floorUnits.map(floorUnit => ({ floorUnit, state: floorUnit.state }));
   const freeUnits = unitsWithState.filter(u => u.state.status === 'free');
   const busyUnits = unitsWithState.filter(u => u.state.status !== 'free');
   const waiting = entries.filter(e => e.status === 'waiting');
@@ -87,7 +86,10 @@ export default function WaitlistSection({ unit, notify }: ManagerSectionProps) {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <p className="text-sm font-medium text-foreground">{entry.name}</p>
+                          <p className="text-sm font-medium text-foreground">
+                            {entry.name}
+                            {entry.byCustomer && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">Reserva online</span>}
+                          </p>
                           <p className="text-xs text-muted-foreground">{formatPhone(entry.phone)}</p>
                         </td>
                         <td className="px-4 py-3 text-sm text-foreground">{entry.partySize} pessoas</td>

@@ -8,13 +8,6 @@ export const LIVE_STATUS_STYLE: Record<TableLiveStatus, { tone: string; dot: str
   called: { tone: 'bg-error/10 border-error/30 text-error', dot: 'bg-error', text: 'text-error', label: 'Chamado' },
 };
 
-/** Ordem de urgência: uma mesa mesclada assume o status mais urgente entre as mesas que a compõem. */
-const STATUS_URGENCY: TableLiveStatus[] = ['called', 'occupied', 'reserved', 'free'];
-
-export function mostUrgentStatus(statuses: TableLiveStatus[]): TableLiveStatus {
-  return STATUS_URGENCY.find(status => statuses.includes(status)) ?? 'free';
-}
-
 export const SHAPE_LABELS: Record<TableShape, string> = {
   round: 'Redonda',
   square: 'Quadrada',

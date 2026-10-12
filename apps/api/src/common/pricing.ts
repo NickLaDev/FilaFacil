@@ -15,3 +15,7 @@ export function promotionState(startsAt: Date, endsAt: Date, now: Date): Promoti
 export function bestPromotion<T extends { discountPercent: number }>(promotions: T[]): T | null {
   return promotions.reduce<T | null>((best, promotion) => (!best || promotion.discountPercent > best.discountPercent ? promotion : best), null);
 }
+
+/** Preço final do item: com a melhor promoção vigente, se houver. Única regra de preço do servidor. */
+export const finalPriceCents = (priceCents: number, promotion: { discountPercent: number } | null) =>
+  promotion ? applyDiscount(priceCents, promotion.discountPercent) : priceCents;

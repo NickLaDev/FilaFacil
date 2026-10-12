@@ -10,6 +10,7 @@ export class ManagedMenuItemDto implements ManagedMenuItem {
   priceCents!: number;
   imageUrl!: string | null;
   available!: boolean;
+  highlighted!: boolean;
   position!: number;
   updatedAt!: string;
 }

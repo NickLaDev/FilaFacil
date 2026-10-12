@@ -1,6 +1,4 @@
-import { getTableLiveState, mergeSummary } from '@/services/floorService';
-import type { FloorLayout, FloorTable, TableLiveState, TableMerge } from '@/types/floor';
-import { mostUrgentStatus } from './tableStyles';
+import type { FloorTable, TableLiveState, TableMapDto } from '@/types/floor';
 
 /** Mesa avulsa ou grupo de mesas mescladas — a unidade que o atendente enxerga e atende. */
 export interface FloorUnit {
@@ -8,30 +6,43 @@ export interface FloorUnit {
   label: string;
   capacity: number;
   tables: FloorTable[];
-  merge: TableMerge | null;
+  /** Id do grupo mesclado; null para mesa avulsa. */
+  groupId: string | null;
+  /** Mesa usada nas ações; o servidor aplica a ação ao grupo inteiro. */
+  actionTableId: string;
+  state: TableLiveState;
 }
 
-export function buildFloorUnits(layout: Pick<FloorLayout, 'tables' | 'merges'>): FloorUnit[] {
-  const mergedIds = new Set(layout.merges.flatMap(m => m.tableIds));
-  const standalone: FloorUnit[] = layout.tables
-    .filter(t => !mergedIds.has(t.id))
-    .map(t => ({ key: t.id, label: t.label, capacity: t.capacity, tables: [t], merge: null }));
-  const merged: FloorUnit[] = layout.merges.flatMap(merge => {
-    const summary = mergeSummary(merge, layout.tables);
-    return summary.members.length ? [{ key: merge.id, label: summary.label, capacity: summary.capacity, tables: summary.members, merge }] : [];
+const toTable = ({ id, label, shape, capacity, x, y, qrCode }: TableMapDto['tables'][number]): FloorTable => ({ id, label, shape, capacity, x, y, qrCode });
+
+/** Grupos viram uma unidade só (ficha 47); o estado já vem resolvido pelo servidor (chamado > ocupada > reservada > livre). */
+export function buildFloorUnits(map: TableMapDto): FloorUnit[] {
+  const byId = new Map(map.tables.map(table => [table.id, table]));
+  const standalone = map.tables
+    .filter(table => !table.groupId)
+    .map<FloorUnit>(table => ({
+      key: table.id,
+      label: table.label,
+      capacity: table.capacity,
+      tables: [toTable(table)],
+      groupId: null,
+      actionTableId: table.id,
+      state: { status: table.status, people: table.partySize, since: table.since, pendingCall: table.pendingCall, reservation: table.reservation },
+    }));
+  const grouped = map.groups.flatMap<FloorUnit>(group => {
+    const members = group.tableIds.flatMap(id => (byId.has(id) ? [toTable(byId.get(id)!)] : []));
+    if (!members.length) return [];
+    return [
+      {
+        key: group.id,
+        label: group.label,
+        capacity: group.capacity,
+        tables: members,
+        groupId: group.id,
+        actionTableId: members[0].id,
+        state: { status: group.status, people: group.partySize, since: group.since, pendingCall: group.pendingCall, reservation: group.reservation },
+      },
+    ];
   });
-  return [...standalone, ...merged];
-}
-
-export function unitLiveState(unit: FloorUnit, liveStates: Record<string, TableLiveState>): TableLiveState {
-  const states = unit.tables.map(t => getTableLiveState(liveStates, t.id));
-  const since = states
-    .map(s => s.since)
-    .filter((value): value is string => Boolean(value))
-    .sort()[0];
-  return {
-    status: mostUrgentStatus(states.map(s => s.status)),
-    people: states.reduce((sum, s) => sum + s.people, 0),
-    since,
-  };
+  return [...standalone, ...grouped];
 }

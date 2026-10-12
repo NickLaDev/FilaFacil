@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { MenuRankingDto } from '@filafacil/shared';
+import { Throttle } from '@nestjs/throttler';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { PageQueryDto } from '../../common/pagination/page-query.dto.js';
 import { CurrentEstablishment, EstablishmentScoped, RequireAccess } from '../access/access.decorators.js';
@@ -7,8 +9,9 @@ import type { EstablishmentContext } from '../access/access.types.js';
 import { CurrentAuth } from '../auth/auth.decorators.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { ImageFileInterceptor } from '../storage/image-upload.interceptor.js';
-import { CreateMenuItemDto, SetAvailabilityDto, UpdateMenuItemDto } from './dto/menu.dto.js';
+import { CreateMenuItemDto, SetAvailabilityDto, SetHighlightDto, UpdateMenuItemDto } from './dto/menu.dto.js';
 import { AvailabilityHistoryPageDto, ManagedMenuItemDto, MenuCategoryResponseDto } from './dto/menu-responses.dto.js';
+import { MenuRankingService } from './menu-ranking.service.js';
 import { MenuService } from './menu.service.js';
 
 /** Limite do interceptor de upload; a validação fina (tamanho/conteúdo) fica no ImageUploadService. */
@@ -18,7 +21,10 @@ const UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
 @EstablishmentScoped()
 @Controller('establishments/:establishmentId/menu')
 export class MenuController {
-  constructor(private readonly menu: MenuService) {}
+  constructor(
+    private readonly menu: MenuService,
+    private readonly ranking: MenuRankingService,
+  ) {}
 
   @Get('items')
   @RequireAccess(['menu.edit', 'menu.availability'])
@@ -95,5 +101,34 @@ export class MenuController {
   @ApiOperation({ summary: 'Histórico de alterações de disponibilidade (quem e quando)' })
   history(@CurrentEstablishment() establishment: EstablishmentContext, @Query() query: PageQueryDto): Promise<AvailabilityHistoryPageDto> {
     return this.menu.availabilityHistory(establishment.id, query);
+  }
+
+  @Get('ranking')
+  @RequireAccess(['menu.edit'])
+  @ApiOperation({ summary: 'Itens mais pedidos nos últimos 30 dias, recalculados toda semana (ficha 46)' })
+  getRanking(@CurrentEstablishment() establishment: EstablishmentContext): Promise<MenuRankingDto> {
+    return this.ranking.get(establishment.id);
+  }
+
+  @Post('ranking/recalculate')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @RequireAccess(['menu.edit'])
+  @ApiOperation({ summary: 'Recalcula o ranking deste estabelecimento agora (ficha 46)' })
+  async recalculateRanking(@CurrentEstablishment() establishment: EstablishmentContext): Promise<MenuRankingDto> {
+    await this.ranking.recalculate(establishment.id);
+    return this.ranking.get(establishment.id);
+  }
+
+  @Put('items/:itemId/highlight')
+  @HttpCode(204)
+  @RequireAccess(['menu.edit'])
+  @ApiOperation({ summary: 'Destaca (ou remove o destaque de) um item manualmente (ficha 46)' })
+  @ApiErrors(400, 404)
+  async setHighlight(
+    @CurrentEstablishment() establishment: EstablishmentContext,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: SetHighlightDto,
+  ) {
+    await this.ranking.setHighlighted(establishment.id, itemId, dto.highlighted);
   }
 }

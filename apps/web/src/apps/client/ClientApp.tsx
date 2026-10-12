@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import AccessBlocked from '@/components/layout/AccessBlocked';
 import Toast from '@/components/ui/Toast';
+import { QR_LINK_PARAM } from '@/services/floorService';
 import { useToast } from '@/components/ui/useToast';
 import { onSessionEvent } from '@/lib/api/client';
-import { useVerifiedContacts } from '@/services/accountExtrasService';
 import { handleSessionExpired, logout, OAUTH_ERROR_MESSAGES, useMe } from '@/services/authService';
 import { ClientContext, useClient, type ClientAccount, type ClientContextValue } from './clientContext';
 import { BOTTOM_NAV_SCREENS } from './navigation';
 import BottomNav from './components/BottomNav';
 import { useClientOrders } from './hooks/useOrders';
+import { useQrResolver } from './hooks/useQrResolver';
 import type { CartLine, ClientScreen, SignupDraft, TableContext, VerificationRequest } from './types';
 import { SplashScreen, WelcomeScreen } from './screens/EntryScreens';
 import { LoginScreen, VerifyCodeScreen } from './screens/LoginScreens';
@@ -22,7 +23,7 @@ import { HomeInBarScreen, HomeOutOfBarScreen } from './screens/HomeScreens';
 import { ItemDetailScreen, MenuScreen } from './screens/MenuScreens';
 import { CartScreen, OrderConfirmedScreen, PaymentScreen } from './screens/CheckoutScreens';
 import { OrderTrackingScreen, OrdersScreen, ReceiptScreen } from './screens/OrderScreens';
-import { AddressesScreen, EditProfileScreen, ProfileScreen } from './screens/ProfileScreens';
+import { AddressesScreen, EditProfileScreen, ProfileScreen, ReservationsScreen } from './screens/ProfileScreens';
 import { AccountSecurityScreen, DeleteAccountScreen } from './screens/AccountScreens';
 
 const EMPTY_SIGNUP: SignupDraft = { name: '', cpf: '', email: '', phone: '', password: '' };
@@ -56,6 +57,7 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
   payment: () => <PaymentScreen />,
   'order-confirmed': () => <OrderConfirmedScreen />,
   orders: () => <OrdersScreen />,
+  reservations: () => <ReservationsScreen />,
   'order-tracking': () => <OrderTrackingScreen />,
   receipt: () => <ReceiptScreen />,
   profile: () => <ProfileScreen />,
@@ -66,24 +68,66 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
 };
 
 /** Telas que exigem conta; visitante/deslogado cai no login. */
-const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security']);
+const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations']);
 
-/** Retorno do login com Google/Apple: a API redireciona com ?auth=success ou ?auth_error=código. */
-function readOAuthResult() {
+interface LaunchParams {
+  oauth: { success: boolean; error: string | null };
+  tableCode: string | null;
+}
+
+/**
+ * Parâmetros de abertura (?auth=…, ?auth_error=…, ?mesa=…) lidos uma única vez por carregamento da página e
+ * removidos do endereço. O valor fica guardado porque o React pode descartar a primeira renderização (Suspense)
+ * e rodar os inicializadores de novo — com o endereço já limpo, o link da mesa se perderia.
+ */
+let launchParams: LaunchParams | null = null;
+function readLaunchParams(): LaunchParams {
+  if (launchParams) return launchParams;
   const params = new URLSearchParams(window.location.search);
   const success = params.get('auth') === 'success';
   const error = params.get('auth_error');
-  if (success || error) window.history.replaceState(null, '', window.location.pathname);
-  return { success, error };
+  const tableCode = params.get(QR_LINK_PARAM);
+  if (success || error || tableCode) {
+    for (const key of ['auth', 'auth_error', QR_LINK_PARAM]) params.delete(key);
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  }
+  launchParams = { oauth: { success, error }, tableCode };
+  return launchParams;
+}
+
+/** Marca os parâmetros como usados: uma montagem posterior do app não repete o link nem o aviso de login. */
+function consumeLaunchParams(part: 'oauth' | 'tableCode') {
+  if (!launchParams) return;
+  if (part === 'oauth') launchParams = { ...launchParams, oauth: { success: false, error: null } };
+  else launchParams = { ...launchParams, tableCode: null };
+}
+
+/**
+ * Link de mesa aberto pela câmera: assim que a sessão é conferida, resolve o código e leva direto à mesa
+ * (a vinheta não navega sozinha nesse caso, então nada disputa com essa navegação). Se a API não responder,
+ * cai no início normal.
+ */
+function TableLinkHandler({ code }: { code: string | null }) {
+  const { account, sessionLoading } = useClient();
+  const { resolve } = useQrResolver();
+  const handled = useRef(false);
+  useEffect(() => {
+    if (!code || sessionLoading || handled.current) return;
+    handled.current = true;
+    consumeLaunchParams('tableCode');
+    void resolve(code, { fallback: account ? 'home-out-of-bar' : 'welcome' });
+  }, [code, sessionLoading, account, resolve]);
+  return null;
 }
 
 export default function ClientApp() {
   const me = useMe();
   const user = me.data?.user ?? null;
-  const verified = useVerifiedContacts(user);
-  const account = useMemo<ClientAccount | null>(() => (user ? { ...user, ...verified } : null), [user, verified]);
+  const account: ClientAccount | null = user;
   const [suspended, setSuspended] = useState(false);
-  const [oauthResult] = useState(readOAuthResult);
+  const [oauthResult] = useState(() => readLaunchParams().oauth);
+  const [tableLink] = useState(() => readLaunchParams().tableCode);
   const { toastMessage, showToast } = useToast();
 
   const [screen, setScreen] = useState<ClientScreen>(oauthResult.success ? 'home-out-of-bar' : oauthResult.error ? 'login' : 'splash');
@@ -106,6 +150,7 @@ export default function ClientApp() {
   useEffect(() => {
     if (oauthResult.error) showToast(OAUTH_ERROR_MESSAGES[oauthResult.error] ?? 'Não foi possível entrar. Tente novamente.');
     else if (oauthResult.success) showToast('Login realizado');
+    consumeLaunchParams('oauth');
   }, [oauthResult, showToast]);
 
   // Suspensão (ficha 36) e sessão revogada chegam pela API ou pelo WebSocket na hora.
@@ -129,6 +174,7 @@ export default function ClientApp() {
     showToast,
     account,
     sessionLoading: me.isPending,
+    deepLink: tableLink !== null,
     signOut,
     isVisitor: isVisitor && !account,
     continueAsVisitor: destination => {
@@ -196,7 +242,7 @@ export default function ClientApp() {
     },
     signupDraft,
     setSignupDraft,
-  }), [screen, go, showToast, account, me.isPending, signOut, isVisitor, postAuthScreen, table, establishmentId, selectedItemId, cart, cartEstablishmentId, orderId, verification, signupDraft]);
+  }), [screen, go, showToast, account, me.isPending, tableLink, signOut, isVisitor, postAuthScreen, table, establishmentId, selectedItemId, cart, cartEstablishmentId, orderId, verification, signupDraft]);
 
   if (suspended) {
     return (
@@ -214,6 +260,7 @@ export default function ClientApp() {
     <ClientContext.Provider value={value}>
       <div className="relative min-h-screen">
         <Toast message={toastMessage} />
+        <TableLinkHandler code={tableLink} />
         {SCREENS[activeScreen]()}
         {BOTTOM_NAV_SCREENS.has(activeScreen) && <ClientBottomNav screen={activeScreen} />}
       </div>

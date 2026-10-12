@@ -30,6 +30,8 @@ export const PERMISSIONS = [
   { key: 'recipes.manage', label: 'Gerenciar fichas técnicas', scope: 'establishment' },
   { key: 'floor.manage', label: 'Editar planta do salão', scope: 'establishment' },
   { key: 'waitlist.manage', label: 'Gerenciar fila de espera', scope: 'establishment' },
+  { key: 'orders.manage', label: 'Acompanhar e atualizar pedidos', scope: 'establishment' },
+  { key: 'orders.refund', label: 'Estornar pagamentos de pedidos', scope: 'establishment' },
   { key: 'platform.establishments', label: 'Gerenciar estabelecimentos', scope: 'platform' },
   { key: 'platform.users', label: 'Gerenciar usuários', scope: 'platform' },
   { key: 'platform.plans', label: 'Gerenciar planos', scope: 'platform' },
@@ -44,8 +46,8 @@ export const permissionLabel = (key: string) => PERMISSIONS.find(p => p.key === 
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
   client: ['orders.place'],
-  attendant: ['tables.view', 'menu.availability'],
-  manager: ['tables.view', 'menu.availability', 'menu.edit', 'promotions.manage', 'recipes.manage', 'floor.manage', 'waitlist.manage'],
+  attendant: ['tables.view', 'menu.availability', 'orders.manage'],
+  manager: ['tables.view', 'menu.availability', 'menu.edit', 'promotions.manage', 'recipes.manage', 'floor.manage', 'waitlist.manage', 'orders.manage', 'orders.refund'],
   admin: ['platform.establishments', 'platform.users', 'platform.plans'],
 };
 

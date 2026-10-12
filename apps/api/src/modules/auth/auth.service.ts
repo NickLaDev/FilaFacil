@@ -7,9 +7,10 @@ import {
   normalizeEmail,
   normalizePhone,
   ROLE_DEFAULT_PERMISSIONS,
+  type OtpChallengeResponse,
   type OtpChannel,
 } from '@filafacil/shared';
-import { badRequest, conflict, notFound, unauthorized, unprocessable } from '../../common/http/app-error.js';
+import { AppError, badRequest, conflict, notFound, serviceUnavailable, unauthorized, unprocessable } from '../../common/http/app-error.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { CpfProtector } from './cpf-protector.service.js';
@@ -17,7 +18,7 @@ import type { LoginDto, RegisterDto } from './dto/auth.dto.js';
 import { LoginAttemptsService } from './login-attempts.service.js';
 import { OtpService } from './otp.service.js';
 import { PasswordHasher } from './password-hasher.service.js';
-import { suspendedError } from './session.service.js';
+import { SessionService, suspendedError } from './session.service.js';
 
 const CONFLICT_MESSAGES = {
   cpf: { code: 'CPF_ALREADY_REGISTERED', message: 'Este CPF já possui cadastro. Entre na sua conta.' },
@@ -41,6 +42,7 @@ export class AuthService {
     private readonly cpf: CpfProtector,
     private readonly otp: OtpService,
     private readonly attempts: LoginAttemptsService,
+    private readonly sessions: SessionService,
   ) {}
 
   /** Ficha 01: nome + CPF validado e único, com e-mail+senha ou celular como forma de acesso. */
@@ -149,5 +151,101 @@ export class AuthService {
       });
     }
     return user.id;
+  }
+
+  // ─── Verificação de contato da conta logada (ficha 65) ──────────────────────
+
+  /** Canais pelos quais esta instalação consegue entregar códigos (a tela só oferece os disponíveis). */
+  codeChannels(): Record<OtpChannel, boolean> {
+    return { email: this.otp.channelAvailable('email'), phone: this.otp.channelAvailable('phone') };
+  }
+
+  /** Envia o código para o contato que a conta já tem; o destino nunca vem da requisição. */
+  async requestContactVerification(userId: string, channel: OtpChannel, ipAddress: string | undefined) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true, phone: true, emailVerifiedAt: true, phoneVerifiedAt: true },
+    });
+    const destination = channel === 'phone' ? user.phone : user.email;
+    if (!destination) {
+      throw unprocessable('CONTACT_MISSING', channel === 'phone' ? 'Sua conta não tem celular cadastrado.' : 'Sua conta não tem e-mail cadastrado.');
+    }
+    if (channel === 'phone' ? user.phoneVerifiedAt : user.emailVerifiedAt) {
+      throw conflict('ALREADY_VERIFIED', 'Este contato já está verificado.');
+    }
+    return this.otp.issue(channel, destination, ipAddress, { purpose: 'contact_verification', userId });
+  }
+
+  /** Só um código válido, emitido para esta conta e para o contato atual dela, marca como verificado. */
+  async confirmContactVerification(userId: string, challengeId: string, code: string) {
+    const { channel, destination } = await this.otp.verify(challengeId, code, { purpose: 'contact_verification', userId });
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true, phone: true } });
+    // O contato pode ter sido trocado depois do envio: o código não vale para o novo valor.
+    if ((channel === 'phone' ? user.phone : user.email) !== destination) {
+      throw badRequest('OTP_INVALID', 'Código incorreto ou expirado.');
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: channel === 'phone' ? { phoneVerifiedAt: new Date() } : { emailVerifiedAt: new Date() },
+    });
+  }
+
+  // ─── Recuperação de senha (ficha 44) ───────────────────────────────────────
+
+  /**
+   * Envia um código de uso único (10 min) para o contato da conta. A resposta tem sempre o mesmo formato,
+   * exista ou não a conta (e mesmo com envio bloqueado por limite), para não revelar quem está cadastrado.
+   */
+  async requestPasswordReset(channel: OtpChannel, rawDestination: string, ipAddress: string | undefined): Promise<OtpChallengeResponse> {
+    const destination = channel === 'phone' ? normalizePhone(rawDestination) : normalizeEmail(rawDestination);
+    const valid = channel === 'phone' ? isValidPhone(destination) : isValidEmail(destination);
+    if (!valid) {
+      throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [
+        { field: 'destination', message: channel === 'phone' ? 'Digite um celular válido com DDD.' : 'Digite um e-mail válido.' },
+      ]);
+    }
+    // Canal sem provider é falha de configuração (igual para todos), não da conta.
+    if (!this.otp.channelAvailable(channel)) {
+      throw serviceUnavailable('OTP_DELIVERY_UNAVAILABLE', 'Envio de código indisponível no momento. Tente por outro canal.');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: channel === 'phone' ? { phone: destination } : { email: destination },
+      select: { id: true, status: true },
+    });
+    if (user && user.status === 'active') {
+      try {
+        return await this.otp.issue(channel, destination, ipAddress, { purpose: 'password_reset', userId: user.id });
+      } catch (error) {
+        if (!(error instanceof AppError) || (error.code !== 'OTP_COOLDOWN' && error.code !== 'OTP_HOURLY_LIMIT')) throw error;
+        // Reenvio em cooldown: devolve o desafio válido que já existe (o código enviado continua valendo).
+        const current = await this.otp.latestValid(channel, destination, 'password_reset', user.id);
+        if (current) return current;
+      }
+    }
+    return this.otp.decoy(channel, destination, 'password_reset');
+  }
+
+  /** Código válido + senha nova forte: troca a senha, encerra todas as sessões e invalida outros códigos pendentes. */
+  async confirmPasswordReset(challengeId: string, code: string, newPassword: string): Promise<void> {
+    if (!isStrongPassword(newPassword)) {
+      throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [{ field: 'newPassword', message: 'A senha precisa de 8+ caracteres, com letra e número.' }]);
+    }
+    const { channel, userId } = await this.otp.verify(challengeId, code, { purpose: 'password_reset' });
+    if (!userId) throw badRequest('OTP_INVALID', 'Código incorreto ou expirado.');
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true, status: true } });
+    if (!user || user.status !== 'active') throw badRequest('OTP_INVALID', 'Código incorreto ou expirado.');
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        // Receber o código prova a posse do contato.
+        data: { passwordHash: await this.passwords.hash(newPassword), ...(channel === 'phone' ? { phoneVerifiedAt: now } : { emailVerifiedAt: now }) },
+      }),
+      this.prisma.otpChallenge.updateMany({ where: { userId, purpose: 'password_reset', consumedAt: null }, data: { consumedAt: now } }),
+      // Biometrias cadastradas com a senha antiga (possivelmente comprometida) deixam de valer.
+      this.prisma.passkey.deleteMany({ where: { userId } }),
+    ]);
+    if (user.email) this.attempts.reset(user.email);
+    await this.sessions.revokeAllForUser(userId, 'password_reset');
   }
 }

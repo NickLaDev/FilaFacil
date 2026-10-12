@@ -7,7 +7,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
-import { createFloorTable, fetchFloorLayout, mergeSummary, mergeTables, saveFloorLayout, unmergeTables, useFloorLayout } from '@/services/floorService';
+import { createFloorTable, fetchFloorLayout, mergeTables, saveFloorLayout, unmergeTables, useFloorLayout, useTableMap } from '@/services/floorService';
 import { useEstablishmentPlan } from '@/services/planService';
 import type { FloorLayout, FloorTable } from '@/types/floor';
 import type { ManagerSectionProps } from '../../types';
@@ -27,9 +27,11 @@ export default function FloorPlanSection(props: ManagerSectionProps) {
   return <FloorEditor {...props} saved={layout} />;
 }
 
-function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { saved: FloorLayout }) {
+function FloorEditor({ unit, notify, saved }: ManagerSectionProps & { saved: FloorLayout }) {
   const { draft, setDraft, dirty, baseVersion, reset, updateTable, removeTable } = useFloorDraft(saved);
   const plan = useEstablishmentPlan(unit.id).data;
+  const groups = useTableMap(unit.id).data?.groups ?? [];
+  const [merging, setMerging] = useState(false);
   const canDuplicate = plan?.features.includes('layout_duplication') ?? false;
   const [saving, setSaving] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -43,7 +45,7 @@ function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { sav
 
   const tableLimit = plan && plan.limits.tables < UNLIMITED ? plan.limits.tables : null;
   const atTableLimit = tableLimit !== null && draft.tables.length >= tableLimit;
-  const selectedMerge = draft.merges.find(m => m.id === selectedMergeId) ?? null;
+  const selectedMerge = groups.find(g => g.id === selectedMergeId) ?? null;
 
   function clearSelection() {
     setSelectedIds([]);
@@ -96,17 +98,34 @@ function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { sav
     updateTable(table.id, { x: clampPosition(table.x + delta[0] * step), y: clampPosition(table.y + delta[1] * step) });
   }
 
-  function mergeSelected() {
-    const next = mergeTables(draft, selectedIds);
-    setDraft(next);
-    setSelectedIds([]);
-    setSelectedMergeId(next.merges.at(-1)?.id ?? null);
-    setMergeMode(false);
+  async function mergeSelected() {
+    setMerging(true);
+    try {
+      const map = await mergeTables(unit.id, selectedIds);
+      setSelectedIds([]);
+      setSelectedMergeId(map.groups.find(group => selectedIds.every(id => group.tableIds.includes(id)))?.id ?? null);
+      setMergeMode(false);
+      setError('');
+      notify('Mesas mescladas — o mapa do atendente já mostra uma unidade só');
+    } catch (failure) {
+      setError(errorMessage(failure, 'Não foi possível mesclar as mesas.'));
+    } finally {
+      setMerging(false);
+    }
   }
 
-  function unmerge(mergeId: string) {
-    setDraft(prev => unmergeTables(prev, mergeId));
-    setSelectedMergeId(null);
+  async function unmerge(groupId: string) {
+    setMerging(true);
+    try {
+      await unmergeTables(unit.id, groupId);
+      setSelectedMergeId(null);
+      setError('');
+      notify('Mesclagem desfeita');
+    } catch (failure) {
+      setError(errorMessage(failure, 'Não foi possível desfazer a mesclagem.'));
+    } finally {
+      setMerging(false);
+    }
   }
 
   async function save() {
@@ -118,7 +137,6 @@ function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { sav
       const savedLayout = await saveFloorLayout(unit.id, {
         version: baseVersion,
         tables: draft.tables.map(t => ({ ...t, label: t.label.trim() })),
-        merges: draft.merges,
       });
       reset(savedLayout);
       clearSelection();
@@ -170,18 +188,18 @@ function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { sav
           </button>
         )}
         {mergeMode && selectedIds.length >= 2 && (
-          <button onClick={mergeSelected} className="flex items-center gap-2 bg-foreground text-background px-4 py-2 rounded-xl text-sm font-medium">
+          <button onClick={() => void mergeSelected()} disabled={merging || dirty} title={dirty ? 'Salve a planta antes de mesclar' : undefined} className="disabled:opacity-50 flex items-center gap-2 bg-foreground text-background px-4 py-2 rounded-xl text-sm font-medium">
             Mesclar {selectedIds.length} mesas
           </button>
         )}
         <button
           onClick={() => setShowDuplicate(true)}
-          disabled={!canDuplicate}
-          title={canDuplicate ? undefined : `Duplicar layout não está incluído no plano ${plan?.name ?? 'atual'}`}
+          disabled={!canDuplicate || draft.tables.length === 0 || dirty}
+          title={canDuplicate ? (dirty ? 'Salve a planta antes de duplicar' : undefined) : `Duplicar layout não está incluído no plano ${plan?.name ?? 'atual'}`}
           className="flex items-center gap-2 border border-border text-foreground px-4 py-2 rounded-xl text-sm font-medium hover:bg-muted disabled:opacity-50 disabled:hover:bg-transparent"
         >
           {canDuplicate ? <Copy size={14} /> : <Lock size={14} />}
-          Duplicar de outra unidade
+          Duplicar para outra unidade
         </button>
 
         <div className="ml-auto flex items-center gap-2">
@@ -203,39 +221,32 @@ function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { sav
               <EmptyState
                 icon={MapIcon}
                 title="Planta vazia"
-                description={`Desenhe o salão de ${unit.name} adicionando mesas${canDuplicate ? ' ou copie a planta de outra unidade' : ''}.`}
+                description={`Desenhe o salão de ${unit.name} adicionando mesas.`}
                 action={
-                  <div className="flex gap-2">
-                    <button onClick={addTable} className="bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-medium">
-                      Adicionar mesa
-                    </button>
-                    {canDuplicate && (
-                      <button onClick={() => setShowDuplicate(true)} className="border border-border px-4 py-2 rounded-xl text-sm font-medium hover:bg-muted">
-                        Duplicar de outra unidade
-                      </button>
-                    )}
-                  </div>
+                  <button onClick={addTable} className="bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-medium">
+                    Adicionar mesa
+                  </button>
                 }
               />
             </div>
           ) : (
             <FloorCanvas canvasRef={canvasRef} editable onBackgroundClick={clearSelection}>
-              {draft.merges.map(merge => {
-                const summary = mergeSummary(merge, draft.tables);
-                if (summary.members.length < 2) return null;
+              {groups.map(merge => {
+                const members = draft.tables.filter(t => merge.tableIds.includes(t.id));
+                if (members.length < 2) return null;
                 return (
                   <MergeBlock
                     key={merge.id}
-                    members={summary.members}
+                    members={members}
                     variant="outline"
                     selected={merge.id === selectedMergeId}
-                    ariaLabel={`Selecionar ${summary.label}`}
+                    ariaLabel={`Selecionar ${merge.label}`}
                     onClick={() => {
                       setSelectedIds([]);
                       setSelectedMergeId(merge.id);
                     }}
                   >
-                    {summary.label} · {summary.capacity} lugares
+                    {merge.label} · {merge.capacity} lugares
                   </MergeBlock>
                 );
               })}
@@ -274,29 +285,27 @@ function FloorEditor({ unit, units, notify, saved }: ManagerSectionProps & { sav
           <TableInspector
             draft={draft}
             selectedIds={selectedIds}
+            groups={groups}
             selectedMerge={selectedMerge}
+            busy={merging}
+            dirty={dirty}
             onUpdateTable={updateTable}
             onRemoveTable={id => {
               removeTable(id);
               setSelectedIds(prev => prev.filter(selected => selected !== id));
             }}
-            onMerge={mergeSelected}
-            onUnmerge={unmerge}
+            onMerge={() => void mergeSelected()}
+            onUnmerge={id => void unmerge(id)}
           />
         )}
       </div>
 
       {showDuplicate && (
         <DuplicateLayoutModal
-          target={unit}
-          units={units}
+          source={unit}
           hasUnsavedChanges={dirty}
           onClose={() => setShowDuplicate(false)}
-          onDuplicated={async sourceName => {
-            reset(await fetchFloorLayout(unit.id));
-            clearSelection();
-            notify(`Planta de ${sourceName} copiada para ${unit.name}`);
-          }}
+          onDuplicated={targetName => notify(`Planta de ${unit.name} copiada para ${targetName}`)}
         />
       )}
     </div>

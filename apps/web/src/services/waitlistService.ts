@@ -3,7 +3,6 @@ import { REALTIME_EVENTS, type ReleaseTablesResponse, type WaitlistDto, type Wai
 import { api } from '@/lib/api/client';
 import { queryClient } from '@/lib/api/queryClient';
 import { useRealtime } from '@/lib/realtime';
-import { clearLocalTableStates } from './floorService';
 import { staffKeys } from './staffKeys';
 
 const base = (establishmentId: string) => `/establishments/${establishmentId}/waitlist`;
@@ -49,6 +48,7 @@ export async function seatParty(establishmentId: string, entryId: string) {
   } finally {
     refresh(establishmentId);
     void queryClient.invalidateQueries({ queryKey: staffKeys.floor(establishmentId) });
+    void queryClient.invalidateQueries({ queryKey: staffKeys.tableMap(establishmentId) });
   }
 }
 
@@ -64,10 +64,10 @@ export async function removeFromWaitlist(establishmentId: string, entryId: strin
 export async function releaseTables(establishmentId: string, tableIds: string[]) {
   try {
     const result = await api.post<ReleaseTablesResponse>(`/establishments/${establishmentId}/floor-plan/tables/release`, { tableIds });
-    clearLocalTableStates(tableIds);
     return result.notifiedEntry;
   } finally {
     refresh(establishmentId);
     void queryClient.invalidateQueries({ queryKey: staffKeys.floor(establishmentId) });
+    void queryClient.invalidateQueries({ queryKey: staffKeys.tableMap(establishmentId) });
   }
 }

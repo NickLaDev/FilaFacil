@@ -25,8 +25,32 @@ export const envSchema = z
     CPF_ENCRYPTION_KEY: key32,
     OTP_HMAC_SECRET: secret,
 
+    /** Domínio das credenciais WebAuthn (biometria). Vazio = host de WEB_ORIGIN. Mudar invalida as credenciais salvas. */
+    WEBAUTHN_RP_ID: optional,
+
     SMS_PROVIDER: z.enum(['dev', 'none']).default('none'),
-    EMAIL_PROVIDER: z.enum(['dev', 'none']).default('none'),
+    EMAIL_PROVIDER: z.enum(['dev', 'smtp', 'none']).default('none'),
+    SMTP_HOST: optional,
+    SMTP_PORT: z.coerce.number().int().positive().default(587),
+    /** true = TLS direto (porta 465); false = STARTTLS quando o servidor oferece (porta 587). */
+    SMTP_SECURE: z.stringbool().default(false),
+    SMTP_USER: optional,
+    SMTP_PASS: optional,
+    /** Remetente dos e-mails (ex.: "FilaFácil <no-reply@exemplo.com>"). */
+    SMTP_FROM: optional,
+
+    /**
+     * Gateway de pagamento. `none` recusa pagamentos (503). `simulated` é só para demonstração (nenhum dinheiro
+     * é movido): exige ALLOW_SIMULATED_PAYMENTS=true e é recusado em produção.
+     */
+    PAYMENT_PROVIDER: z.enum(['mercadopago', 'simulated', 'none']).default('none'),
+    /** Opt-in explícito para o gateway simulado. */
+    ALLOW_SIMULATED_PAYMENTS: z.stringbool().default(false),
+    MP_ACCESS_TOKEN: optional,
+    /** Assinatura secreta do webhook (painel do Mercado Pago > Webhooks). */
+    MP_WEBHOOK_SECRET: optional,
+    /** URL pública de POST /payments/webhook. Vazio em desenvolvimento local: a sincronização cobre. */
+    PAYMENT_WEBHOOK_URL: optional,
 
     GOOGLE_CLIENT_ID: optional,
     GOOGLE_CLIENT_SECRET: optional,
@@ -35,12 +59,35 @@ export const envSchema = z
     APPLE_KEY_ID: optional,
     APPLE_PRIVATE_KEY: optional,
 
+    /** Desliga o rate limit (só testes/desenvolvimento): recusado em produção. */
+    THROTTLE_DISABLED: z.stringbool().default(false),
+
     STORAGE_DRIVER: z.enum(['local']).default('local'),
     STORAGE_LOCAL_DIR: z.string().default('storage/uploads'),
     UPLOAD_MAX_BYTES: z.coerce.number().int().positive().max(10 * 1024 * 1024).default(2 * 1024 * 1024),
   })
   .superRefine((env, ctx) => {
+    if (env.EMAIL_PROVIDER === 'smtp') {
+      for (const key of ['SMTP_HOST', 'SMTP_FROM'] as const) {
+        if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: 'obrigatório com EMAIL_PROVIDER=smtp' });
+      }
+    }
+    if (env.PAYMENT_PROVIDER === 'simulated') {
+      if (env.NODE_ENV === 'production') {
+        ctx.addIssue({ code: 'custom', path: ['PAYMENT_PROVIDER'], message: 'o gateway simulado não pode rodar em produção' });
+      }
+      if (!env.ALLOW_SIMULATED_PAYMENTS) {
+        ctx.addIssue({ code: 'custom', path: ['ALLOW_SIMULATED_PAYMENTS'], message: 'obrigatório com PAYMENT_PROVIDER=simulated (opt-in explícito)' });
+      }
+    }
+    if (env.PAYMENT_PROVIDER === 'mercadopago' && !env.MP_ACCESS_TOKEN) {
+      ctx.addIssue({ code: 'custom', path: ['MP_ACCESS_TOKEN'], message: 'obrigatório com PAYMENT_PROVIDER=mercadopago' });
+    }
     if (env.NODE_ENV !== 'production') return;
+    if (env.PAYMENT_PROVIDER === 'mercadopago' && !env.MP_WEBHOOK_SECRET) {
+      ctx.addIssue({ code: 'custom', path: ['MP_WEBHOOK_SECRET'], message: 'obrigatório em produção (autentica o webhook)' });
+    }
+    if (env.THROTTLE_DISABLED) ctx.addIssue({ code: 'custom', path: ['THROTTLE_DISABLED'], message: 'não pode desligar o rate limit em produção' });
     if (!env.COOKIE_SECURE) ctx.addIssue({ code: 'custom', path: ['COOKIE_SECURE'], message: 'obrigatório em produção' });
     for (const key of ['SMS_PROVIDER', 'EMAIL_PROVIDER'] as const) {
       if (env[key] === 'dev') ctx.addIssue({ code: 'custom', path: [key], message: 'provider de desenvolvimento não pode rodar em produção' });

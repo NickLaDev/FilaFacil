@@ -12,7 +12,7 @@ import { clearSessionCookies, REFRESH_COOKIE, setSessionCookies } from './auth-c
 import { ClientMeta, CurrentAuth, Public } from './auth.decorators.js';
 import { AuthService } from './auth.service.js';
 import type { AuthContext, RequestMeta } from './auth.types.js';
-import { LoginDto, OtpRequestDto, OtpVerifyDto, RegisterDto } from './dto/auth.dto.js';
+import { ContactVerificationConfirmDto, ContactVerificationRequestDto, LoginDto, OtpRequestDto, OtpVerifyDto, PasswordResetConfirmDto, PasswordResetRequestDto, RegisterDto } from './dto/auth.dto.js';
 import { AuthProvidersDto, OtpChallengeDto } from './dto/auth-responses.dto.js';
 import type { OAuthProviderId } from './oauth/oauth-provider.js';
 import { OAuthService } from './oauth/oauth.service.js';
@@ -81,6 +81,26 @@ export class AuthController {
   }
 
   @Public()
+  @Post('password-reset')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 5, ttl: MINUTE } })
+  @ApiOperation({ summary: 'Envia o código de recuperação de senha (ficha 44); resposta igual para contas inexistentes' })
+  @ApiErrors(400, 429, 503)
+  requestPasswordReset(@Body() dto: PasswordResetRequestDto, @ClientMeta() meta: RequestMeta): Promise<OtpChallengeDto> {
+    return this.auth.requestPasswordReset(dto.channel, dto.destination, meta.ipAddress);
+  }
+
+  @Public()
+  @Post('password-reset/confirm')
+  @HttpCode(204)
+  @Throttle({ default: { limit: 10, ttl: MINUTE } })
+  @ApiOperation({ summary: 'Confere o código (uso único, 10 min) e define a nova senha; encerra todas as sessões (ficha 44)' })
+  @ApiErrors(400, 429)
+  async confirmPasswordReset(@Body() dto: PasswordResetConfirmDto) {
+    await this.auth.confirmPasswordReset(dto.challengeId, dto.code, dto.newPassword);
+  }
+
+  @Public()
   @Post('refresh')
   @HttpCode(204)
   @Throttle({ default: { limit: 30, ttl: MINUTE } })
@@ -122,7 +142,27 @@ export class AuthController {
   @Get('providers')
   @ApiOperation({ summary: 'Quais logins sociais estão configurados neste ambiente' })
   providers(): AuthProvidersDto {
-    return this.oauth.status();
+    return { ...this.oauth.status(), codeChannels: this.auth.codeChannels(), paymentProvider: this.config.env.PAYMENT_PROVIDER };
+  }
+
+  @Post('verify-contact')
+  @Throttle({ default: { limit: 5, ttl: MINUTE } })
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'Envia o código de verificação para o e-mail ou celular da conta logada (ficha 65)' })
+  @ApiErrors(401, 409, 422, 429, 503)
+  requestContactVerification(@CurrentAuth() auth: AuthContext, @Body() dto: ContactVerificationRequestDto, @ClientMeta() meta: RequestMeta): Promise<OtpChallengeDto> {
+    return this.auth.requestContactVerification(auth.userId, dto.channel, meta.ipAddress);
+  }
+
+  @Post('verify-contact/confirm')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: MINUTE } })
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'Confere o código e grava o contato como verificado (ficha 65)' })
+  @ApiErrors(400, 401, 429)
+  async confirmContactVerification(@CurrentAuth() auth: AuthContext, @Body() dto: ContactVerificationConfirmDto): Promise<MeResponseDto> {
+    await this.auth.confirmContactVerification(auth.userId, dto.challengeId, dto.code);
+    return this.me.getMe(auth.userId);
   }
 
   @Public()

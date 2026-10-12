@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Check, ChevronRight, Heart, MapPin, Plus, ShieldCheck, ShoppingBag, Trash2, type LucideIcon } from 'lucide-react';
+import { CalendarCheck, Check, ChevronRight, Heart, MapPin, Plus, ShieldCheck, ShoppingBag, Trash2, type LucideIcon } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { formatPhone, isValidEmail, isValidPhone } from '@/lib/validation';
 import BottomSheet from '@/components/ui/BottomSheet';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { deleteAddress, saveAddress, setDefaultAddress, updateProfile, useAddresses } from '@/services/profileService';
+import { useMyReservations } from '@/services/reservationService';
 import { useClient } from '../clientContext';
 import { FixedBottom, ScreenHeader } from '../components/Layout';
 import { TextField } from '../components/AuthFields';
@@ -75,6 +76,7 @@ export function ProfileScreen() {
             title="Sua atividade"
             items={[
               { icon: ShoppingBag, label: 'Meus pedidos', screen: 'orders' },
+              { icon: CalendarCheck, label: 'Minhas reservas', screen: 'reservations' },
               { icon: Heart, label: 'Favoritos', screen: 'favorites' },
               { icon: MapPin, label: 'Meus endereços', screen: 'addresses' },
             ]}
@@ -159,7 +161,7 @@ export function EditProfileScreen() {
         {serverError?.field === 'form' && <p className="text-error text-sm">{serverError.message}</p>}
         {account.cpfMasked && <p className="text-xs text-muted-foreground">CPF {account.cpfMasked} · para alterar o CPF, fale com o suporte.</p>}
       </div>
-      <FixedBottom>
+      <FixedBottom aboveNav>
         <button onClick={() => void save()} disabled={saving} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl disabled:opacity-60">
           {saving ? 'Salvando…' : 'Salvar alterações'}
         </button>
@@ -251,6 +253,41 @@ export function AddressesScreen() {
           </div>
         </BottomSheet>
       )}
+    </div>
+  );
+}
+
+/** Ficha 13: atalho do perfil para as reservas (entradas na fila) ativas do cliente. */
+export function ReservationsScreen() {
+  const { go, openEstablishment } = useClient();
+  const query = useMyReservations(true);
+  return (
+    <div className="min-h-screen bg-background flex flex-col pb-24">
+      <ScreenHeader title="Minhas reservas" onBack={() => go('profile')} />
+      <div className="px-5 py-5 flex flex-col gap-3">
+        {query.error ? (
+          <ErrorBlock error={query.error} onRetry={() => void query.refetch()} />
+        ) : !query.data ? (
+          <LoadingBlock />
+        ) : query.data.items.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-10">Você não tem reservas ativas. Abra a página de um restaurante e toque em “Reservar mesa”.</p>
+        ) : (
+          query.data.items.map(item => (
+            <button key={item.id} onClick={() => openEstablishment(item.restaurantId)} className="bg-card border border-border rounded-xl p-4 text-left flex flex-col gap-1">
+              <p className="font-display font-bold text-foreground">{item.restaurantName}</p>
+              <p className="text-sm text-foreground">
+                {item.status === 'notified'
+                  ? `Mesa pronta${item.notifiedTableLabel ? ` (${item.notifiedTableLabel})` : ''}! Procure a recepção.`
+                  : `Posição ${item.position} na fila`}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {item.partySize} {item.partySize === 1 ? 'pessoa' : 'pessoas'}
+                {item.status === 'waiting' && item.estimatedWaitMinutes ? ` · espera estimada ~${item.estimatedWaitMinutes} min` : ''}
+              </p>
+            </button>
+          ))
+        )}
+      </div>
     </div>
   );
 }

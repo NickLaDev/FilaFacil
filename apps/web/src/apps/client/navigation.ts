@@ -10,7 +10,7 @@ export interface Tab {
 }
 
 const ORDERS_TAB: Tab = { id: 'orders', label: 'Pedidos', icon: ShoppingBag, screens: ['orders', 'order-tracking', 'receipt', 'order-confirmed', 'cart'], destination: 'orders' };
-const PROFILE_TAB: Tab = { id: 'profile', label: 'Perfil', icon: User, screens: ['profile', 'edit-profile', 'addresses', 'account-security', 'favorites'], destination: 'profile' };
+const PROFILE_TAB: Tab = { id: 'profile', label: 'Perfil', icon: User, screens: ['profile', 'edit-profile', 'addresses', 'account-security', 'favorites', 'reservations'], destination: 'profile' };
 
 export const TABS_IN_BAR: Tab[] = [
   { id: 'home', label: 'Início', icon: Home, screens: ['home-in-bar'], destination: 'home-in-bar' },

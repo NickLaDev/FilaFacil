@@ -1,15 +1,15 @@
 import { useState } from 'react';
-import { AlertCircle, ChevronRight, Clock, LogOut, MapPin, QrCode, Search, Star } from 'lucide-react';
-import { cn, formatCurrency, getInitials } from '@/lib/utils';
+import { AlertCircle, BellRing, ChevronRight, Clock, LogOut, MapPin, QrCode, Search, Star } from 'lucide-react';
+import { cn, formatCents, formatCurrency, getInitials } from '@/lib/utils';
 import { imageOrPlaceholder } from '@/lib/images';
 import { BrandBadge } from '@/components/brand/Logo';
 import BottomSheet from '@/components/ui/BottomSheet';
 import { LoadingBlock } from '@/components/ui/QueryState';
 import { useClientLocation } from '@/services/deviceService';
-import { useHighlightedIds } from '@/services/menuService';
 import { ORDER_STEPS } from '@/services/orderService';
-import { useNearbyRestaurants, usePublicMenu, useRestaurantData, type Restaurant } from '@/services/restaurantService';
-import type { Order, OrderStatus } from '@/types/order';
+import { errorMessage } from '@/lib/api/client';
+import { callAttendant, useNearbyRestaurants, usePublicMenu, useRestaurantData, type Restaurant } from '@/services/restaurantService';
+import type { OrderDto, OrderStatus } from '@/types/order';
 import { isAccountVerified, useClient } from '../clientContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { useClientOrders } from '../hooks/useOrders';
@@ -26,7 +26,7 @@ function Avatar() {
   );
 }
 
-function ActiveOrderCard({ order, status }: { order: Order; status: OrderStatus }) {
+function ActiveOrderCard({ order, status }: { order: OrderDto; status: OrderStatus }) {
   const { openOrder } = useClient();
   const stepLabel = ORDER_STEPS.find(step => step.status === status)?.label;
   return (
@@ -88,13 +88,13 @@ export function HomeOutOfBarScreen() {
   const { go, account, openEstablishment, openOrder } = useClient();
   const restaurants = useNearbyRestaurants();
   const location = useClientLocation();
-  const { favoriteIds } = useFavorites();
+  const { favorites: favoriteList } = useFavorites();
   const { orders, active } = useClientOrders();
   const firstName = account?.name.split(' ')[0];
 
   // A API já devolve ordenado por distância (ficha 11).
   const nearby = restaurants.data ?? [];
-  const favorites = nearby.filter(e => favoriteIds.has(e.id));
+  const favorites = favoriteList;
   const pastOrders = orders.filter(entry => entry.status === 'delivered').slice(0, 2);
 
   return (
@@ -187,9 +187,9 @@ export function HomeOutOfBarScreen() {
               {pastOrders.map(({ order }) => (
                 <div key={order.id} className="bg-card border border-border rounded-xl p-4">
                   <p className="font-display font-semibold text-foreground text-sm">{order.establishmentName}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{order.lines.map(line => `${line.quantity}× ${line.name}`).join(', ')}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{order.items.map(item => `${item.quantity}× ${item.name}`).join(', ')}</p>
                   <div className="flex items-center gap-2 mt-1.5">
-                    <span className="text-xs text-muted-foreground">{formatCurrency(order.total)}</span>
+                    <span className="text-xs text-muted-foreground">{formatCents(order.totalCents)}</span>
                     <span className="text-border">·</span>
                     <span className="text-xs text-muted-foreground">{new Date(order.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</span>
                     <span className="text-border">·</span>
@@ -210,17 +210,34 @@ export function HomeOutOfBarScreen() {
 }
 
 export function HomeInBarScreen() {
-  const { go, account, table, setTable, clearCart, openMenu, openItem } = useClient();
+  const { go, account, table, setTable, clearCart, openMenu, openItem, showToast } = useClient();
+  const [calling, setCalling] = useState(false);
   const establishment = useRestaurantData(table?.establishmentId);
   const menu = usePublicMenu(table?.establishmentId).data?.items ?? [];
-  const highlightedIds = useHighlightedIds();
   const { active } = useClientOrders();
   const [leaveSheet, setLeaveSheet] = useState(false);
   const firstName = account?.name.split(' ')[0];
 
   if (!table) return null;
   if (!establishment) return <LoadingBlock className="min-h-screen" />;
-  const highlights = menu.filter(item => highlightedIds.has(item.id)).slice(0, 4);
+  const highlights = menu.filter(item => item.topSeller).slice(0, 4);
+
+  async function callWaiter() {
+    if (!table) return;
+    if (!account) {
+      showToast('Entre na sua conta para chamar o atendente');
+      return;
+    }
+    setCalling(true);
+    try {
+      await callAttendant(table.tableId);
+      showToast('Atendente chamado — já estamos a caminho');
+    } catch (error) {
+      showToast(errorMessage(error, 'Não foi possível chamar o atendente'));
+    } finally {
+      setCalling(false);
+    }
+  }
 
   function confirmLeave() {
     setTable(null);
@@ -293,6 +310,14 @@ export function HomeInBarScreen() {
             <Clock size={13} className="text-muted-foreground" />
             <span className="text-sm text-muted-foreground">Tempo médio: <strong className="text-foreground">{establishment.avgTime}</strong></span>
           </div>
+          <button
+            onClick={() => void callWaiter()}
+            disabled={calling}
+            className="flex items-center gap-1.5 bg-card border border-border rounded-lg px-3 py-2 text-sm font-medium text-foreground disabled:opacity-60"
+          >
+            <BellRing size={13} className="text-primary" />
+            {calling ? 'Chamando…' : 'Chamar atendente'}
+          </button>
         </div>
       </div>
 

@@ -2,16 +2,19 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 
 export type ScannerState = 'starting' | 'scanning' | 'unsupported' | 'denied';
 
-const SCAN_INTERVAL_MS = 300;
+const SCAN_INTERVAL_MS = 250;
+/** Largura máxima do quadro analisado pelo decodificador por software (equilíbrio entre precisão e CPU). */
+const FRAME_WIDTH = 640;
 
-const isScannerSupported = () => 'BarcodeDetector' in window && Boolean(navigator.mediaDevices?.getUserMedia);
+const hasCamera = () => Boolean(navigator.mediaDevices?.getUserMedia);
 
 /**
- * Leitor de QR Code pela câmera (ficha 02) usando a Shape Detection API nativa.
- * Onde o navegador não suporta (ex.: Safari), a tela oferece a digitação do código.
+ * Leitor de QR Code pela câmera (ficha 02). Usa a Shape Detection API quando o navegador a tem
+ * (Chrome/Edge/Android) e, nos demais — Safari no iPhone, Firefox —, decodifica os quadros do vídeo
+ * com jsQR. A câmera exige HTTPS (ou localhost); sem ela a tela oferece digitar o código.
  */
 export function useQrScanner(videoRef: RefObject<HTMLVideoElement | null>, onCode: (code: string) => void, enabled: boolean) {
-  const [state, setState] = useState<ScannerState>(() => (isScannerSupported() ? 'starting' : 'unsupported'));
+  const [state, setState] = useState<ScannerState>(() => (hasCamera() ? 'starting' : 'unsupported'));
   const onCodeRef = useRef(onCode);
 
   useEffect(() => {
@@ -19,19 +22,34 @@ export function useQrScanner(videoRef: RefObject<HTMLVideoElement | null>, onCod
   }, [onCode]);
 
   useEffect(() => {
-    if (!enabled || !isScannerSupported()) return;
+    if (!enabled || !hasCamera()) return;
     let stream: MediaStream | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
-    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    const native = 'BarcodeDetector' in window ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+
+    /** Texto do QR visto no quadro atual, ou null. */
+    const readFrame = async (video: HTMLVideoElement): Promise<string | null> => {
+      if (native) return (await native.detect(video))[0]?.rawValue || null;
+      if (!context || !video.videoWidth) return null;
+      const scale = Math.min(1, FRAME_WIDTH / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const { default: jsQR } = await import('jsqr');
+      const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+      return jsQR(frame.data, frame.width, frame.height, { inversionAttempts: 'dontInvert' })?.data || null;
+    };
 
     const scan = async () => {
       const video = videoRef.current;
       if (cancelled || !video) return;
       try {
-        const [barcode] = await detector.detect(video);
-        if (barcode?.rawValue) {
-          onCodeRef.current(barcode.rawValue);
+        const code = await readFrame(video);
+        if (code) {
+          onCodeRef.current(code);
           return;
         }
       } catch {

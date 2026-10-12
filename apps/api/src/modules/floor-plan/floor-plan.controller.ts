@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Put } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { CurrentEstablishment, EstablishmentScoped, RequireAccess } from '../access/access.decorators.js';
 import type { EstablishmentContext } from '../access/access.types.js';
 import { CurrentAuth } from '../auth/auth.decorators.js';
 import type { AuthContext } from '../auth/auth.types.js';
-import { FloorPlanResponseDto, SaveFloorPlanDto } from './dto/floor-plan.dto.js';
+import { DuplicateFloorPlanDto, FloorPlanResponseDto, SaveFloorPlanDto } from './dto/floor-plan.dto.js';
 import { FloorPlanService } from './floor-plan.service.js';
 
 @ApiTags('Planta do salão')
@@ -31,5 +31,24 @@ export class FloorPlanController {
     @Body() dto: SaveFloorPlanDto,
   ): Promise<FloorPlanResponseDto> {
     return this.floorPlan.save(establishment, dto, auth.userId);
+  }
+
+  @Get('duplicate-targets')
+  @RequireAccess(['floor.manage'], 'layout_duplication')
+  @ApiOperation({ summary: 'Unidades da mesma organização para onde o layout pode ser copiado (ficha 61)' })
+  duplicateTargets(@CurrentEstablishment() establishment: EstablishmentContext, @CurrentAuth() auth: AuthContext) {
+    return this.floorPlan.duplicateTargets(establishment.id, auth.userId);
+  }
+
+  @Post('duplicate')
+  @RequireAccess(['floor.manage'], 'layout_duplication')
+  @ApiOperation({ summary: 'Copia o layout desta unidade para outra da mesma organização, de forma atômica (ficha 61)' })
+  @ApiErrors(400, 403, 409, 422)
+  duplicate(
+    @CurrentEstablishment() establishment: EstablishmentContext,
+    @CurrentAuth() auth: AuthContext,
+    @Body() dto: DuplicateFloorPlanDto,
+  ): Promise<FloorPlanResponseDto> {
+    return this.floorPlan.duplicate(establishment, auth, dto);
   }
 }

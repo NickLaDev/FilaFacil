@@ -1,25 +1,29 @@
 import { useState, type UIEvent } from 'react';
-import { ChevronLeft, Clock, MapPin, Navigation, Pause, QrCode, Star, Utensils } from 'lucide-react';
+import { CalendarCheck, ChevronLeft, Clock, MapPin, Navigation, Pause, QrCode, Star, Utensils } from 'lucide-react';
 import { imageOrPlaceholder } from '@/lib/images';
 import { cn } from '@/lib/utils';
 import { LoadingBlock } from '@/components/ui/QueryState';
 import { useClientLocation } from '@/services/deviceService';
+import { useMyReservation } from '@/services/reservationService';
 import { useRestaurant } from '@/services/restaurantService';
 import { useClient } from '../clientContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { FixedBottom } from '../components/Layout';
 import { FavoriteButton, StatusBadge } from '../components/RestaurantCard';
+import ReservationSheet from '../components/ReservationSheet';
 import RestaurantUnavailable from '../components/RestaurantUnavailable';
 import { distanceMeters, formatDistance } from '../format';
 
 /** Página do restaurante: galeria, nota, endereço com rota e horário do dia (ficha 12). */
 export default function RestaurantDetailScreen() {
-  const { go, establishmentId, table, openMenu } = useClient();
+  const { go, establishmentId, table, openMenu, account, showToast, setPostAuthScreen } = useClient();
   const query = useRestaurant(establishmentId);
   const restaurant = query.data;
   const { coords } = useClientLocation();
   const { favoriteIds, toggle } = useFavorites();
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [reserving, setReserving] = useState(false);
+  const reservation = useMyReservation(establishmentId, Boolean(account));
 
   if (query.error) return <RestaurantUnavailable error={query.error} onRetry={() => void query.refetch()} onExplore={() => go('explore')} />;
   if (!restaurant) return <LoadingBlock className="min-h-screen" />;
@@ -29,13 +33,28 @@ export default function RestaurantDetailScreen() {
   // "Como chegar" abre o app de mapas com as coordenadas cadastradas.
   const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${restaurant.latitude},${restaurant.longitude}`;
 
+  function openReservation() {
+    if (!account) {
+      showToast('Entre na sua conta para reservar');
+      setPostAuthScreen('restaurant-detail');
+      go('login');
+      return;
+    }
+    if (!reservation.data) {
+      showToast(reservation.isError ? 'Não foi possível carregar sua reserva. Tente de novo.' : 'Carregando sua reserva…');
+      if (reservation.isError) void reservation.refetch();
+      return;
+    }
+    setReserving(true);
+  }
+
   function handleGalleryScroll(event: UIEvent<HTMLDivElement>) {
     const { scrollLeft, clientWidth } = event.currentTarget;
     setPhotoIndex(Math.round(scrollLeft / clientWidth));
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col pb-52">
+    <div className="min-h-screen bg-background flex flex-col pb-72">
       <div className="relative h-48 flex-shrink-0">
         <div className="flex h-full overflow-x-auto snap-x snap-mandatory [scrollbar-width:none]" onScroll={handleGalleryScroll}>
           {(restaurant.images.length ? restaurant.images : [imageOrPlaceholder(null)]).map((image, index) => (
@@ -55,7 +74,7 @@ export default function RestaurantDetailScreen() {
         >
           <ChevronLeft size={18} className="text-white" />
         </button>
-        <FavoriteButton isFavorite={favoriteIds.has(restaurant.id)} onToggle={() => toggle(restaurant.id)} className="absolute top-4 right-4 w-9 h-9 bg-black/40" />
+        <FavoriteButton isFavorite={favoriteIds.has(restaurant.id)} onToggle={() => toggle(restaurant.id, restaurant)} className="absolute top-4 right-4 w-9 h-9 bg-black/40" />
         {restaurant.images.length > 1 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
             {restaurant.images.map((image, index) => (
@@ -166,6 +185,19 @@ export default function RestaurantDetailScreen() {
           <Utensils size={16} />
           Ver cardápio
         </button>
+        <button
+          onClick={openReservation}
+          disabled={!restaurant.reservationsOpen && !reservation.data?.reservation}
+          className="w-full bg-card border border-border text-foreground font-medium py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          <CalendarCheck size={15} />
+          {reservation.data?.reservation ? `Sua reserva · posição ${reservation.data.reservation.position}` : 'Reservar mesa'}
+        </button>
+        {!restaurant.reservationsOpen && !reservation.data?.reservation && (
+          <p className="text-xs text-muted-foreground text-center -mt-1">
+            {closed ? 'Reservas disponíveis quando o restaurante estiver aberto.' : 'Este restaurante não aceita reservas pelo aplicativo.'}
+          </p>
+        )}
         {!isLinked && !closed && (
           <button
             onClick={() => go('qr-scanner')}
@@ -176,6 +208,10 @@ export default function RestaurantDetailScreen() {
           </button>
         )}
       </FixedBottom>
+
+      {reserving && reservation.data && (
+        <ReservationSheet restaurantId={restaurant.id} restaurantName={restaurant.name} state={reservation.data} notify={showToast} onClose={() => setReserving(false)} />
+      )}
     </div>
   );
 }

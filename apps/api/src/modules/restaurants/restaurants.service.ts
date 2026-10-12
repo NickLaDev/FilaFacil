@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import type { Page, PublicMenu, RestaurantDetail, RestaurantSummary } from '@filafacil/shared';
+import type { OrderingStatus, RestaurantCategoriesDto, Page, PublicMenu, QrResolveDto, RestaurantDetail, RestaurantSummary } from '@filafacil/shared';
 import { notFound } from '../../common/http/app-error.js';
-import { applyDiscount, bestPromotion } from '../../common/pricing.js';
+import { bestPromotion, finalPriceCents } from '../../common/pricing.js';
 import { activeRange, hoursLabel, localClock, toOpeningHourDto } from '../../common/time/opening-hours.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
@@ -21,6 +21,9 @@ const PUBLIC_INCLUDE = {
 
 type PublicEstablishment = Prisma.EstablishmentGetPayload<{ include: typeof PUBLIC_INCLUDE }>;
 
+/** Ficha 60: `categories` (várias) e o antigo `category` (uma) viram uma lista só; basta atender a uma. */
+const wantedCategories = (query: SearchRestaurantsDto) => [...new Set([...(query.categories ?? []), ...(query.category ? [query.category] : [])])];
+
 const escapeLike = (value: string) => value.replace(/[\\%_]/g, match => `\\${match}`);
 
 @Injectable()
@@ -35,13 +38,14 @@ export class RestaurantsService {
     const now = new Date();
     const hasCoordinates = query.lat !== undefined && query.lng !== undefined;
     const distances = hasCoordinates ? await this.nearbyIds(query) : null;
+    const wanted = wantedCategories(query);
 
     const establishments = await this.prisma.establishment.findMany({
       where: {
         status: 'active',
         ...(distances ? { id: { in: [...distances.keys()] } } : {}),
         ...(query.q ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
-        ...(query.category ? { foodCategories: { has: query.category } } : {}),
+        ...(wanted.length ? { foodCategories: { hasSome: wanted } } : {}),
       },
       include: PUBLIC_INCLUDE,
       ...(distances ? {} : { orderBy: { name: 'asc' }, take: MAX_CANDIDATES }),
@@ -75,7 +79,7 @@ export class RestaurantsService {
       Prisma.sql`latitude BETWEEN ${lat - deltaLat} AND ${lat + deltaLat}`,
       Prisma.sql`longitude BETWEEN ${lng - deltaLng} AND ${lng + deltaLng}`,
       ...(query.q ? [Prisma.sql`name ILIKE ${`%${escapeLike(query.q)}%`}`] : []),
-      ...(query.category ? [Prisma.sql`${query.category} = ANY(food_categories)`] : []),
+      ...(wantedCategories(query).length ? [Prisma.sql`food_categories && ${wantedCategories(query)}::text[]`] : []),
     ];
     const rows = await this.prisma.$queryRaw<{ id: string; distance_m: number }[]>`
       SELECT id, distance_m FROM (
@@ -92,12 +96,29 @@ export class RestaurantsService {
     return new Map(rows.map(row => [row.id, Math.round(Number(row.distance_m))]));
   }
 
+  /** Resumos públicos (só ativos) na ordem dos ids recebidos; usado pelos favoritos. */
+  async summariesByIds(ids: string[]): Promise<RestaurantSummary[]> {
+    const rows = await this.prisma.establishment.findMany({ where: { id: { in: ids }, status: 'active' }, include: PUBLIC_INCLUDE });
+    const now = new Date();
+    const byId = new Map(rows.map(row => [row.id, this.toSummary(row, now, null)]));
+    return ids.flatMap(id => byId.get(id) ?? []);
+  }
+
+  /** Ficha 60: categorias de comida cadastradas em estabelecimentos ativos, em ordem alfabética. */
+  async categories(): Promise<RestaurantCategoriesDto> {
+    const rows = await this.prisma.$queryRaw<{ category: string }[]>`
+      SELECT DISTINCT unnest(food_categories) AS category FROM establishments WHERE status = 'active' ORDER BY category`;
+    return { categories: rows.map(row => row.category) };
+  }
+
   /** Ficha 12: dados públicos do restaurante. Inativo/suspenso responde 404 (some para o cliente). */
   async detail(id: string): Promise<RestaurantDetail> {
     const establishment = await this.prisma.establishment.findFirst({ where: { id, status: 'active' }, include: PUBLIC_INCLUDE });
     if (!establishment) throw notFound('Restaurante não encontrado.');
+    const summary = this.toSummary(establishment, new Date(), null);
     return {
-      ...this.toSummary(establishment, new Date(), null),
+      ...summary,
+      reservationsOpen: summary.isOpenNow && (await this.entitlements.featuresFor(id)).has('waitlist'),
       timezone: establishment.timezone,
       openingHours: [...establishment.openingHours].sort((a, b) => a.weekday - b.weekday || a.opensAt - b.opensAt).map(toOpeningHourDto),
     };
@@ -130,6 +151,8 @@ export class RestaurantsService {
         description: true,
         priceCents: true,
         imageUrl: true,
+        highlighted: true,
+        ranking: { select: { rank: true } },
         category: { select: { id: true, name: true } },
         promotionItems: {
           where: { promotion: { startsAt: { lte: now }, endsAt: { gte: now } } },
@@ -149,18 +172,53 @@ export class RestaurantsService {
         name: item.name,
         description: item.description,
         priceCents: item.priceCents,
-        finalPriceCents: promotion ? applyDiscount(item.priceCents, promotion.discountPercent) : item.priceCents,
+        finalPriceCents: finalPriceCents(item.priceCents, promotion),
         imageUrl: item.imageUrl,
         promotion: promotion ? { ...promotion, endsAt: promotion.endsAt.toISOString() } : null,
+        isTopOrdered: item.ranking !== null,
+        isHighlighted: item.highlighted,
       };
     });
     return { establishmentId: id, categories: [...categories.values()], items: menuItems };
   }
 
-  private toSummary(establishment: PublicEstablishment, now: Date, distanceM: number | null): RestaurantSummary {
+  /** Situação para pedidos: horário de funcionamento, pausa e alta demanda. Também usada ao criar pedidos. */
+  orderingState(
+    establishment: Pick<PublicEstablishment, 'timezone' | 'openingHours' | 'ordersPaused' | 'highDemand'>,
+    now: Date,
+  ): { isOpenNow: boolean; orderingStatus: OrderingStatus; acceptingOrders: boolean; clock: ReturnType<typeof localClock> } {
     const clock = localClock(now, establishment.timezone);
     const isOpenNow = activeRange(establishment.openingHours, clock) !== null;
     const orderingStatus = !isOpenNow ? 'closed' : establishment.ordersPaused ? 'paused' : establishment.highDemand ? 'busy' : 'open';
+    return { isOpenNow, orderingStatus, acceptingOrders: orderingStatus === 'open' || orderingStatus === 'busy', clock };
+  }
+
+  /**
+   * Ficha 02: identifica estabelecimento e mesa pelo código do QR. Vale para qualquer mesa da planta
+   * (inclusive as criadas depois do seed). Código desconhecido ou casa inativa/suspensa = 404.
+   */
+  async resolveQr(rawCode: string): Promise<QrResolveDto> {
+    const code = rawCode.trim().toUpperCase();
+    const table = /^[A-Z0-9-]{3,32}$/.test(code)
+      ? await this.prisma.diningTable.findUnique({
+          where: { qrCode: code },
+          select: { id: true, label: true, establishment: { include: PUBLIC_INCLUDE } },
+        })
+      : null;
+    if (!table || table.establishment.status !== 'active') throw notFound('QR Code não encontrado.');
+    const { orderingStatus, acceptingOrders } = this.orderingState(table.establishment, new Date());
+    return {
+      establishmentId: table.establishment.id,
+      establishmentName: table.establishment.name,
+      tableId: table.id,
+      tableLabel: table.label,
+      orderingStatus,
+      acceptingOrders,
+    };
+  }
+
+  private toSummary(establishment: PublicEstablishment, now: Date, distanceM: number | null): RestaurantSummary {
+    const { isOpenNow, orderingStatus, acceptingOrders, clock } = this.orderingState(establishment, now);
     return {
       id: establishment.id,
       name: establishment.name,
@@ -176,7 +234,7 @@ export class RestaurantsService {
       ratingCount: establishment.ratingCount,
       averageWaitMinutes: establishment.averageWaitMinutes,
       orderingStatus,
-      acceptingOrders: orderingStatus === 'open' || orderingStatus === 'busy',
+      acceptingOrders,
       isOpenNow,
       hoursLabel: hoursLabel(establishment.openingHours, clock),
       images: establishment.photos.map(photo => photo.url),

@@ -9,7 +9,7 @@ export type ClientScreen =
   | 'home-out-of-bar' | 'home-in-bar'
   | 'menu' | 'item-detail' | 'cart'
   | 'payment' | 'order-confirmed'
-  | 'orders' | 'order-tracking' | 'receipt'
+  | 'orders' | 'reservations' | 'order-tracking' | 'receipt'
   | 'profile' | 'edit-profile' | 'addresses' | 'account-security' | 'delete-account';
 
 /** Mesa vinculada pelo QR Code: todo pedido feito nela já sai associado (ficha 02). */
@@ -31,7 +31,7 @@ export interface CartLine {
 export type VerificationChannel = 'email' | 'phone';
 
 export interface VerificationRequest {
-  /** login: entrar por código (real) · signup/contact: confirmar contato (Sprint 2, simulado). */
+  /** login: entrar por código · signup/contact: confirmar o contato da conta logada. */
   purpose: 'login' | 'signup' | 'contact';
   channel: VerificationChannel;
   destination: string;

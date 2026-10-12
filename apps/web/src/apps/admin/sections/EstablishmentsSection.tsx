@@ -298,6 +298,7 @@ interface FormState {
   planId: string;
   status: EstablishmentStatus;
   averageWaitMinutes: string;
+  pickupPoint: string;
   foodCategories: string;
   hours: DayHours[];
 }
@@ -319,6 +320,7 @@ function toFormState(establishment: AdminEstablishmentDto | null, defaults: { or
       planId: defaults.planId,
       status: 'active',
       averageWaitMinutes: '15',
+      pickupPoint: 'Balcão',
       foodCategories: '',
       hours: WEEKDAY_LABELS.map(() => ({ ...DEFAULT_DAY })),
     };
@@ -334,6 +336,7 @@ function toFormState(establishment: AdminEstablishmentDto | null, defaults: { or
     planId: establishment.plan.id,
     status: establishment.status,
     averageWaitMinutes: String(establishment.averageWaitMinutes),
+    pickupPoint: establishment.pickupPoint,
     foodCategories: establishment.foodCategories.join(', '),
     hours: WEEKDAY_LABELS.map((_, weekday) => {
       const range = establishment.openingHours.find(hour => hour.weekday === weekday);
@@ -372,6 +375,7 @@ function toInput(form: FormState): EstablishmentInput {
     planId: form.planId,
     status: form.status,
     averageWaitMinutes: Number(form.averageWaitMinutes),
+    pickupPoint: form.pickupPoint.trim() || 'Balcão',
     foodCategories: form.foodCategories
       .split(',')
       .map(category => category.trim())
@@ -549,6 +553,10 @@ function EstablishmentFormModal({ establishment, notify, onClose, onSaved }: For
           </FormField>
         </div>
         {form.status !== 'active' && <p className="text-xs text-muted-foreground -mt-2">Não aparece nas buscas do cliente.</p>}
+
+        <FormField label="Local de retirada" htmlFor="est-pickup" hint="Onde o cliente busca o pedido pronto (ex.: Balcão 2).">
+          <input id="est-pickup" value={form.pickupPoint} onChange={e => update('pickupPoint', e.target.value)} maxLength={60} className={PANEL_INPUT_CLASS} />
+        </FormField>
 
         <FormField label="Categorias de comida" htmlFor="est-categories" hint="Separadas por vírgula (ex.: Bar, Petiscos).">
           <input id="est-categories" value={form.foodCategories} onChange={e => update('foodCategories', e.target.value)} maxLength={200} className={PANEL_INPUT_CLASS} />

@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsInt, IsString, IsUUID, Length, Max, Min } from 'class-validator';
-import type { ReleaseTablesResponse, WaitlistDto, WaitlistEntryDto, WaitlistStatus } from '@filafacil/shared';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
+import type { MyReservationListItemDto, MyReservationsDto, MyReservationDto, MyReservationStateDto, ReleaseTablesResponse, WaitlistDto, WaitlistEntryDto, WaitlistStatus } from '@filafacil/shared';
 import { Trim } from '../../../common/validation/transforms.js';
 
 export class CreateWaitlistEntryDto {
@@ -51,6 +52,49 @@ export class WaitlistEntryResponseDto implements WaitlistEntryDto {
   estimatedWaitMinutes!: number | null;
   notifiedAt!: string | null;
   notifiedTableLabel!: string | null;
+  byCustomer!: boolean;
+}
+
+export class ReserveDto {
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  partySize!: number;
+
+  /** Celular para o aviso de mesa pronta; opcional quando a conta já tem celular. */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Length(10, 16)
+  phone?: string;
+}
+
+export class MyReservationResponseDto implements MyReservationDto {
+  id!: string;
+  partySize!: number;
+  position!: number;
+  @ApiProperty({ enum: ['waiting', 'notified'] })
+  status!: WaitlistStatus;
+  joinedAt!: string;
+  quotedWaitMinutes!: number;
+  estimatedWaitMinutes!: number | null;
+  notifiedTableLabel!: string | null;
+}
+
+export class MyReservationListItemResponseDto extends MyReservationResponseDto implements MyReservationListItemDto {
+  restaurantId!: string;
+  restaurantName!: string;
+}
+
+export class MyReservationsResponseDto implements MyReservationsDto {
+  @ApiProperty({ type: [MyReservationListItemResponseDto] })
+  items!: MyReservationListItemResponseDto[];
+}
+
+export class MyReservationStateResponseDto implements MyReservationStateDto {
+  hasPhone!: boolean;
+  @ApiProperty({ type: MyReservationResponseDto, nullable: true })
+  reservation!: MyReservationResponseDto | null;
 }
 
 export class WaitlistResponseDto implements WaitlistDto {

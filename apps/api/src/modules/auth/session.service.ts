@@ -39,6 +39,8 @@ export class SessionService {
 
   async create(userId: string, meta: RequestMeta): Promise<IssuedSession> {
     const now = new Date();
+    // Sessões vencidas ou revogadas há mais de 30 dias não têm mais utilidade (e guardam IP/agente).
+    await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: new Date(now.getTime() - 30 * DAY_MS) } }, { revokedAt: { lt: new Date(now.getTime() - 30 * DAY_MS) } }] } });
     const refreshToken = randomToken();
     const [session] = await this.prisma.$transaction([
       this.prisma.session.create({
@@ -73,11 +75,11 @@ export class SessionService {
           rotatedAt: true,
           expiresAt: true,
           revokedAt: true,
-          user: { select: { status: true } },
+          user: { select: { status: true, deletedAt: true } },
         },
       });
       const now = new Date();
-      if (!session) throw sessionExpired();
+      if (!session || session.user.deletedAt) throw sessionExpired();
       // Suspensão primeiro: o app precisa saber que é bloqueio administrativo, não sessão vencida.
       if (session.user.status === 'suspended') throw suspendedError();
       if (session.revokedAt || session.expiresAt <= now) throw sessionExpired();
@@ -146,10 +148,11 @@ export class SessionService {
         userId: true,
         revokedAt: true,
         expiresAt: true,
-        user: { select: { name: true, role: true, status: true, permissions: { select: { permission: true } } } },
+        user: { select: { name: true, role: true, status: true, deletedAt: true, permissions: { select: { permission: true } } } },
       },
     });
     if (!session || session.userId !== userId) throw sessionExpired();
+    if (session.user.deletedAt) throw sessionExpired();
     if (session.user.status === 'suspended') throw suspendedError();
     if (session.revokedAt || session.expiresAt <= new Date()) throw sessionExpired();
     return {

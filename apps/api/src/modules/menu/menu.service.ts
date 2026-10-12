@@ -16,6 +16,7 @@ const ITEM_SELECT = {
   imageUrl: true,
   imageStorageKey: true,
   available: true,
+  highlighted: true,
   position: true,
   updatedAt: true,
   category: { select: { id: true, name: true } },
@@ -32,6 +33,7 @@ const toManagedItem = (item: ItemRow): ManagedMenuItem => ({
   priceCents: item.priceCents,
   imageUrl: item.imageUrl,
   available: item.available,
+  highlighted: item.highlighted,
   position: item.position,
   updatedAt: item.updatedAt.toISOString(),
 });

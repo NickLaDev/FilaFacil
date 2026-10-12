@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Fingerprint } from 'lucide-react';
 import type { OtpChannel } from '@filafacil/shared';
 import { BrandBadge } from '@/components/brand/Logo';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { formatPhone, isValidEmail, isValidPhone, onlyDigits } from '@/lib/validation';
-import { markContactVerified, useDevice } from '@/services/accountExtrasService';
-import { loginWithEmail, requestLoginCode, startProviderLogin, useAuthProviders, verifyLoginCode } from '@/services/authService';
-import { isBiometricAvailable, requestBiometricAuth } from '@/services/deviceService';
+import { queryClient } from '@/lib/api/queryClient';
+import { confirmContactCode, loginWithBiometric, loginWithEmail, meQueryKey, requestContactCode, requestLoginCode, startProviderLogin, useAuthProviders, verifyLoginCode } from '@/services/authService';
+import { isBiometricAvailable, useBiometricHint } from '@/services/deviceService';
 import { useClient } from '../clientContext';
 import { BackButton } from '../components/Layout';
 import { LoadingButton, PasswordField, SocialButton, TextField } from '../components/AuthFields';
@@ -16,7 +16,7 @@ const PROVIDER_LABELS = { google: 'Google', apple: 'Apple' } as const;
 
 /** Entra pelo celular (código por SMS), e-mail (senha ou código), Google ou Apple (ficha 06). */
 export function LoginScreen() {
-  const { go, finishAuth, requestVerification, showToast } = useClient();
+  const { go, finishAuth, requestVerification } = useClient();
   const providers = useAuthProviders();
   const [step, setStep] = useState<'identify' | 'password'>('identify');
   const [identifier, setIdentifier] = useState('');
@@ -114,10 +114,11 @@ export function LoginScreen() {
         <BiometricLoginButton
           loading={loading === 'biometric'}
           onStart={() => setLoading('biometric')}
-          onFinish={() => {
+          onFinish={ok => {
             setLoading(null);
-            showToast('O login por biometria chega com o backend da Sprint 2. Entre com celular ou e-mail.');
+            if (ok) finishAuth();
           }}
+          onError={message => setError(message)}
         />
 
         <TextField
@@ -149,11 +150,11 @@ export function LoginScreen() {
 }
 
 /**
- * Atalho opcional (ficha 59, Sprint 2): aparece se a biometria foi ativada neste aparelho.
- * Abrir sessão por biometria exige WebAuthn no servidor, que ainda não existe.
+ * Atalho opcional (ficha 59): aparece se a biometria foi ativada neste aparelho. O servidor valida a
+ * assinatura do desafio; se falhar ou for cancelada, o login por celular/e-mail continua logo abaixo.
  */
-function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean; onStart: () => void; onFinish: () => void }) {
-  const { biometricUserId } = useDevice();
+function BiometricLoginButton({ loading, onStart, onFinish, onError }: { loading: boolean; onStart: () => void; onFinish: (ok: boolean) => void; onError: (message: string) => void }) {
+  const registered = useBiometricHint();
   const [available, setAvailable] = useState(false);
 
   useEffect(() => {
@@ -162,12 +163,18 @@ function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean
     return () => { active = false; };
   }, []);
 
-  if (!available || !biometricUserId) return null;
+  if (!available || !registered) return null;
 
   async function authenticate() {
     onStart();
-    await requestBiometricAuth();
-    onFinish();
+    try {
+      await loginWithBiometric();
+      onFinish(true);
+    } catch {
+      onFinish(false);
+      // Cancelar e falha de leitura (NotAllowedError) são indistinguíveis: sempre orienta o fallback.
+      onError('Não foi possível ler a biometria. Use celular ou e-mail abaixo.');
+    }
   }
 
   return (
@@ -188,16 +195,40 @@ function BiometricLoginButton({ loading, onStart, onFinish }: { loading: boolean
 }
 
 export function VerifyCodeScreen() {
-  const { go, verification, account, finishAuth, showToast } = useClient();
+  const { go, verification, finishAuth, showToast } = useClient();
+  const providers = useAuthProviders();
   const [challengeId, setChallengeId] = useState(verification?.login?.challenge.challengeId ?? '');
+  const [sendError, setSendError] = useState('');
+  const requested = useRef(false);
+  const isContact = Boolean(verification && verification.purpose !== 'login');
+  const channel = verification?.channel ?? 'email';
+  const channelAvailable = providers.data?.codeChannels[channel];
+  const returnTo = verification?.returnTo ?? 'login';
+
+  // Confirmação de contato (ficha 65): o servidor envia o código ao e-mail/celular da própria conta.
+  useEffect(() => {
+    if (!isContact || channelAvailable !== true || requested.current) return;
+    requested.current = true;
+    requestContactCode(channel)
+      .then(challenge => setChallengeId(challenge.challengeId))
+      .catch((error: unknown) => {
+        if (isApiError(error, 'ALREADY_VERIFIED')) {
+          void queryClient.invalidateQueries({ queryKey: meQueryKey });
+          go(returnTo);
+          return;
+        }
+        setSendError(errorMessage(error));
+      });
+  }, [isContact, channelAvailable, channel, go, returnTo]);
+
   if (!verification) return null;
-  const { purpose, channel, destination, returnTo, login } = verification;
+  const { purpose, destination, login } = verification;
   const channelLabel = channel === 'email' ? 'e-mail' : 'celular';
 
-  /** Login por código: o servidor confere, consome o código e abre a sessão. */
-  async function verifyLogin(code: string): Promise<CodeCheck> {
+  /** Confere o código no servidor, que consome o desafio e (login) abre a sessão ou (contato) grava a verificação. */
+  async function check(confirm: () => Promise<unknown>): Promise<CodeCheck> {
     try {
-      await verifyLoginCode(challengeId, code);
+      await confirm();
       return 'ok';
     } catch (error) {
       if (isApiError(error, 'OTP_TOO_MANY_ATTEMPTS')) return 'too-many';
@@ -206,10 +237,18 @@ export function VerifyCodeScreen() {
     }
   }
 
-  async function resendLogin() {
-    if (!login) return;
+  const verifyLogin = (code: string) => check(() => verifyLoginCode(challengeId, code));
+  const verifyContact = (code: string) => check(() => confirmContactCode(challengeId, code));
+
+  async function resend() {
     try {
-      setChallengeId((await requestLoginCode(channel, login.rawDestination)).challengeId);
+      if (purpose === 'login') {
+        if (!login) return;
+        setChallengeId((await requestLoginCode(channel, login.rawDestination)).challengeId);
+      } else {
+        setSendError('');
+        setChallengeId((await requestContactCode(channel)).challengeId);
+      }
     } catch (error) {
       throw new Error(errorMessage(error), { cause: error });
     }
@@ -220,8 +259,6 @@ export function VerifyCodeScreen() {
       finishAuth();
       return;
     }
-    // Confirmação de contato (ficha 65) ainda é simulada no navegador.
-    if (account) markContactVerified(account, channel);
     showToast(`${channel === 'email' ? 'E-mail' : 'Celular'} verificado`);
     go(returnTo);
   }
@@ -240,17 +277,44 @@ export function VerifyCodeScreen() {
             A confirmação protege sua conta e libera o pagamento pelo app.
           </p>
         )}
-        {purpose === 'login' ? (
+        {isContact && channelAvailable === false ? (
+          <div className="bg-warning-bg border border-warning/20 rounded-xl px-4 py-3">
+            <p className="text-sm text-warning">
+              {channel === 'phone'
+                ? 'O envio de código por SMS ainda não está disponível. Cadastre um e-mail na sua conta para confirmá-la.'
+                : 'O envio de código por e-mail não está disponível neste momento.'}
+            </p>
+          </div>
+        ) : isContact && channelAvailable === undefined ? (
+          <p className="text-sm text-muted-foreground">Preparando o envio do código…</p>
+        ) : purpose === 'login' ? (
           <CodeVerification
             destination={destination}
             onVerified={handleVerified}
             onChangeDestination={() => go('login')}
             verify={verifyLogin}
-            resend={resendLogin}
+            resend={resend}
             devHint="o código aparece no terminal da API (provider de SMS/e-mail de desenvolvimento)."
           />
+        ) : !challengeId ? (
+          // Sem desafio não há o que digitar: nenhuma tentativa é gasta antes de o código existir.
+          <div className="flex flex-col gap-3">
+            {sendError ? (
+              <>
+                <p className="text-error text-sm">{sendError}</p>
+                <button
+                  onClick={() => void resend().catch((error: unknown) => setSendError(error instanceof Error ? error.message : 'Não foi possível enviar o código.'))}
+                  className="self-start text-primary text-sm font-medium"
+                >
+                  Tentar enviar novamente
+                </button>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Enviando o código…</p>
+            )}
+          </div>
         ) : (
-          <CodeVerification destination={destination} onVerified={handleVerified} />
+          <CodeVerification destination={destination} onVerified={handleVerified} verify={verifyContact} resend={resend} />
         )}
         {purpose !== 'login' && (
           <button onClick={() => go(returnTo)} className="text-muted-foreground text-sm mt-2 self-start">

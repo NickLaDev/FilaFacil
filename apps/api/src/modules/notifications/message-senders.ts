@@ -1,4 +1,7 @@
 import { Logger } from '@nestjs/common';
+import { createTransport, type Transporter } from 'nodemailer';
+import type { Env } from '../../config/env.js';
+import { BRAND_NAME } from '../../common/brand.js';
 
 /**
  * Canal de envio desacoplado do fornecedor. Para produção, implemente um provider real
@@ -37,8 +40,30 @@ class DisabledSender {
   }
 }
 
+/** Envio real por SMTP (Nodemailer). Credenciais só por variáveis de ambiente. */
+class SmtpEmailSender {
+  readonly provider = 'smtp';
+  readonly available = true;
+  private readonly transporter: Transporter;
+
+  constructor(private readonly env: Env) {
+    this.transporter = createTransport({
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT,
+      secure: env.SMTP_SECURE,
+      auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined,
+    });
+  }
+
+  async send(destination: string, _destinationMasked: string, message: string) {
+    await this.transporter.sendMail({ from: this.env.SMTP_FROM, to: destination, subject: `${BRAND_NAME}: seu código`, text: message });
+  }
+}
+
 export const createSmsSender = (provider: 'dev' | 'none'): SmsSender =>
   provider === 'dev' ? new DevLogSender('SMS') : new DisabledSender();
 
-export const createEmailSender = (provider: 'dev' | 'none'): EmailSender =>
-  provider === 'dev' ? new DevLogSender('E-mail') : new DisabledSender();
+export const createEmailSender = (env: Env): EmailSender => {
+  if (env.EMAIL_PROVIDER === 'smtp') return new SmtpEmailSender(env);
+  return env.EMAIL_PROVIDER === 'dev' ? new DevLogSender('E-mail') : new DisabledSender();
+};

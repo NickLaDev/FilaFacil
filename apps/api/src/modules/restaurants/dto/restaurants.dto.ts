@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsLatitude, IsLongitude, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsLatitude, IsLongitude, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { PageQueryDto } from '../../../common/pagination/page-query.dto.js';
-import { ToBoolean, ToNumber, Trim } from '../../../common/validation/transforms.js';
+import { ToBoolean, ToList, ToNumber, Trim } from '../../../common/validation/transforms.js';
 
 export const RESTAURANT_SORTS = ['distance', 'wait', 'name'] as const;
 export type RestaurantSort = (typeof RESTAURANT_SORTS)[number];
@@ -50,6 +50,15 @@ export class SearchRestaurantsDto extends PageQueryDto {
   @IsString()
   @MaxLength(40)
   category?: string;
+
+  /** Várias categorias (ficha 60): `?categories=Bar,Petiscos` ou repetido. Basta atender a uma delas. */
+  @IsOptional()
+  @ToList()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  categories?: string[];
 }
 
 export class MenuQueryDto {

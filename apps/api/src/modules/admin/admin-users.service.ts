@@ -19,6 +19,7 @@ import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import type { Prisma, PermissionAuditAction } from '../../generated/prisma/client.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { SessionService } from '../auth/session.service.js';
+import { RealtimeService } from '../realtime/realtime.service.js';
 import type { ListAuditQueryDto, ListUsersQueryDto, UpdateUserAccessDto } from './dto/admin-users.dto.js';
 
 const USER_INCLUDE = {
@@ -65,6 +66,7 @@ export class AdminUsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async list(query: ListUsersQueryDto): Promise<AdminUsersPage> {
@@ -108,20 +110,22 @@ export class AdminUsersService {
       if (found !== establishmentIds.length) throw unprocessable('INVALID_REFERENCE', 'Estabelecimento não encontrado.', [{ field: 'establishmentIds', message: 'Estabelecimento inválido.' }]);
     }
 
-    await this.prisma.$transaction(async tx => {
+    const changed = await this.prisma.$transaction(async tx => {
       const user = await tx.user.findUnique({ where: { id }, include: USER_INCLUDE });
       if (!user) throw notFound('Usuário não encontrado.');
       if (user.role === 'admin' && dto.role !== 'admin') await this.assertAnotherAdmin(tx, id);
 
       const entries = this.diffAccess(user, dto.role, permissions, establishmentIds);
-      if (!entries.length) return;
+      if (!entries.length) return false;
       await tx.user.update({ where: { id }, data: { role: dto.role } });
       await tx.userPermission.deleteMany({ where: { userId: id } });
       await tx.userPermission.createMany({ data: permissions.map(permission => ({ userId: id, permission })) });
       await tx.establishmentMembership.deleteMany({ where: { userId: id, establishmentId: { notIn: establishmentIds } } });
       await tx.establishmentMembership.createMany({ data: establishmentIds.map(establishmentId => ({ userId: id, establishmentId })), skipDuplicates: true });
       await tx.permissionAuditLog.createMany({ data: entries.map(entry => ({ ...entry, targetUserId: id, actorId: actor.userId })) });
+      return true;
     });
+    if (changed) this.realtime.staffAccessChanged(id);
     return this.get(id);
   }
 

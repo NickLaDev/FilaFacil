@@ -4,7 +4,6 @@ import { imageOrPlaceholder } from '@/lib/images';
 import { cn, formatCurrency } from '@/lib/utils';
 import EmptyState from '@/components/ui/EmptyState';
 import { LoadingBlock } from '@/components/ui/QueryState';
-import { useHighlightedIds } from '@/services/menuService';
 import { usePublicMenu, useRestaurant, type PricedMenuItem } from '@/services/restaurantService';
 import { useClient } from '../clientContext';
 import { FixedBottom } from '../components/Layout';
@@ -21,9 +20,8 @@ function useClientMenu() {
   // A API só devolve itens disponíveis, com o preço vigente; mudanças chegam por WebSocket (ficha 19).
   const menu = usePublicMenu(establishmentId);
   const items = menu.data?.items ?? [];
-  const highlightedIds = useHighlightedIds();
   const canOrder = Boolean(establishment && table?.establishmentId === establishment.id && establishment.acceptingOrders);
-  return { establishment, items, categories: menu.data?.categories ?? [], highlightedIds, canOrder, table, error: restaurant.error ?? menu.error, retry: () => void Promise.all([restaurant.refetch(), menu.refetch()]) };
+  return { establishment, items, categories: menu.data?.categories ?? [], canOrder, table, error: restaurant.error ?? menu.error, retry: () => void Promise.all([restaurant.refetch(), menu.refetch()]) };
 }
 
 function PriceTag({ item, className }: { item: PricedMenuItem; className?: string }) {
@@ -37,7 +35,7 @@ function PriceTag({ item, className }: { item: PricedMenuItem; className?: strin
 
 export function MenuScreen() {
   const { go, cart, openItem } = useClient();
-  const { establishment, items, categories: menuCategories, highlightedIds, canOrder, table, error, retry } = useClientMenu();
+  const { establishment, items, categories: menuCategories, canOrder, table, error, retry } = useClientMenu();
   const [category, setCategory] = useState(HIGHLIGHT_CATEGORY);
   const [query, setQuery] = useState('');
 
@@ -48,7 +46,7 @@ export function MenuScreen() {
   const visible = items.filter(item =>
     search
       ? `${item.name} ${item.description}`.toLowerCase().includes(search)
-      : category === HIGHLIGHT_CATEGORY ? highlightedIds.has(item.id) : item.category === category,
+      : category === HIGHLIGHT_CATEGORY ? item.topSeller : item.category === category,
   );
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const cartTotal = cart.reduce((sum, line) => sum + (items.find(i => i.id === line.itemId)?.finalPrice ?? 0) * line.quantity, 0);
@@ -124,7 +122,7 @@ export function MenuScreen() {
           >
             <div className="relative w-24 h-24 flex-shrink-0">
               <img src={imageOrPlaceholder(item.image)} alt={item.name} className="w-full h-full object-cover rounded-lg bg-muted" />
-              {highlightedIds.has(item.id) && (
+              {item.topSeller && (
                 <span className="absolute -top-1.5 -left-1.5 bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-md">+ pedido</span>
               )}
               {item.promotion && (
@@ -168,7 +166,7 @@ export function MenuScreen() {
 
 export function ItemDetailScreen() {
   const { go, selectedItemId, addToCart, showToast } = useClient();
-  const { establishment, items, highlightedIds, canOrder } = useClientMenu();
+  const { establishment, items, canOrder } = useClientMenu();
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState('');
   const item = items.find(i => i.id === selectedItemId);
@@ -201,7 +199,7 @@ export function ItemDetailScreen() {
         <button onClick={() => go('menu')} className="absolute top-4 left-4 w-9 h-9 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm" aria-label="Voltar">
           <ChevronLeft size={18} className="text-white" />
         </button>
-        {highlightedIds.has(item.id) && (
+        {item.topSeller && (
           <span className="absolute top-4 right-4 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full">Mais pedido</span>
         )}
       </div>

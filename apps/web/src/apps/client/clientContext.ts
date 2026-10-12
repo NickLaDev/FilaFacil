@@ -2,10 +2,7 @@ import { createContext, useContext } from 'react';
 import type { AuthUser } from '@filafacil/shared';
 import type { CartLine, ClientScreen, SignupDraft, TableContext, VerificationRequest } from './types';
 
-/**
- * Conta do cliente vinda da API. `emailVerified`/`phoneVerified` também consideram a
- * confirmação simulada da ficha 65 (Sprint 2), ainda sem backend.
- */
+/** Conta do cliente vinda da API (`emailVerified`/`phoneVerified` são gravados pelo servidor). */
 export type ClientAccount = AuthUser;
 
 export const isAccountVerified = (account: ClientAccount) => account.emailVerified || account.phoneVerified;
@@ -18,6 +15,8 @@ export interface ClientContextValue {
   account: ClientAccount | null;
   /** Sessão ainda sendo conferida na API (a splash espera antes de decidir a próxima tela). */
   sessionLoading: boolean;
+  /** App aberto por link de mesa (/?mesa=): a abertura não deve atrasar o cardápio. */
+  deepLink: boolean;
   signOut: () => Promise<void>;
   isVisitor: boolean;
   continueAsVisitor: (destination: ClientScreen) => void;

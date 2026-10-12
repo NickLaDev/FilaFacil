@@ -18,3 +18,5 @@ apps/api/storage/
 
 # Cliente Prisma gerado (pnpm install / prisma generate)
 apps/api/src/generated/
+.e2e/
+e2e/.results/

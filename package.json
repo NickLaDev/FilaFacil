@@ -1,7 +1,7 @@
 {
   "name": "filafacil",
   "private": true,
-  "description": "FilaFacil — monorepo com o frontend (apps/web), a API (apps/api) e o código compartilhado (packages/shared).",
+  "description": "FilaFacil \u2014 monorepo com o frontend (apps/web), a API (apps/api) e o c\u00f3digo compartilhado (packages/shared).",
   "scripts": {
     "setup:env": "node scripts/setup-env.mjs",
     "dev": "pnpm --filter @filafacil/shared build && pnpm --parallel --filter \"./apps/*\" dev",
@@ -15,10 +15,25 @@
     "db:migrate": "pnpm --filter @filafacil/api db:deploy",
     "db:migrate:dev": "pnpm --filter @filafacil/api db:migrate",
     "db:seed": "pnpm --filter @filafacil/api db:seed",
-    "preview": "pnpm --filter @filafacil/web preview"
+    "preview": "pnpm --filter @filafacil/web preview",
+    "e2e:setup": "node e2e/scripts/ensure-stack.mjs",
+    "e2e:reset": "node e2e/scripts/ensure-stack.mjs --reset",
+    "e2e": "playwright test --project=chromium",
+    "e2e:slow": "PW_RUN=slow playwright test --project=slow",
+    "e2e:ui": "playwright test --project=chromium --ui",
+    "e2e:report": "playwright show-report e2e/.results/report-chromium",
+    "e2e:stop": "node scripts/e2e-env.mjs stop",
+    "e2e:lint": "cd e2e && ../apps/web/node_modules/.bin/eslint . && ../apps/web/node_modules/.bin/tsc -p tsconfig.json",
+    "e2e:perf": "PW_RUN=perf E2E_WEB_URL=http://localhost:5181 playwright test --project=perf",
+    "e2e:throttle": "PW_RUN=throttle playwright test --project=throttle"
   },
   "engines": {
     "node": ">=22.12"
   },
-  "packageManager": "pnpm@11.22.0"
+  "packageManager": "pnpm@11.22.0",
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1"
+  }
 }

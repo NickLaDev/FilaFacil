@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, LogOut, Map as MapIcon } from 'lucide-react';
+import { BookOpen, ClipboardList, LogOut, Map as MapIcon } from 'lucide-react';
 import type { MeResponse, OrderingStatus } from '@filafacil/shared';
 import AccessBlocked from '@/components/layout/AccessBlocked';
 import StaffGate from '@/components/layout/StaffGate';
@@ -11,11 +11,13 @@ import { logout } from '@/services/authService';
 import { useRestaurant } from '@/services/restaurantService';
 import FloorMapSection from './sections/FloorMapSection';
 import MenuAvailabilitySection from './sections/MenuAvailabilitySection';
+import OrdersSection from './sections/OrdersSection';
 
-type AttendantSection = 'floor' | 'menu';
+type AttendantSection = 'floor' | 'orders' | 'menu';
 
 const SECTIONS = [
   { id: 'floor', icon: MapIcon, label: 'Mapa', title: 'Mapa de mesas' },
+  { id: 'orders', icon: ClipboardList, label: 'Pedidos', title: 'Pedidos' },
   { id: 'menu', icon: BookOpen, label: 'Cardápio', title: 'Disponibilidade do cardápio' },
 ] as const;
 
@@ -109,7 +111,10 @@ function AttendantPanel({ me }: { me: MeResponse }) {
           </div>
         </header>
 
-        {section === 'floor' && <FloorMapSection establishmentId={establishmentId} />}
+        {section === 'floor' && <FloorMapSection establishmentId={establishmentId} notify={showToast} />}
+        {section === 'orders' && (
+          <OrdersSection establishmentId={establishmentId} canRefund={me.user.permissions.includes('orders.refund')} notify={showToast} />
+        )}
         {section === 'menu' && <MenuAvailabilitySection establishmentId={establishmentId} notify={showToast} />}
       </div>
       <Toast message={toastMessage} />

@@ -226,7 +226,7 @@ describe('Autenticação (fichas 01 e 06)', () => {
 
   describe('Google e Apple', () => {
     it('informa provedores não configurados em vez de simular login', async () => {
-      expect((await t.browser().get('/api/auth/providers')).body).toEqual({ google: false, apple: false });
+      expect((await t.browser().get('/api/auth/providers')).body).toEqual({ google: false, apple: false, codeChannels: { email: true, phone: true }, paymentProvider: 'none' });
       const start = await t.browser().get('/api/auth/oauth/google');
       expect(start.status).toBe(503);
       expect(start.body.code).toBe('PROVIDER_NOT_CONFIGURED');

@@ -34,7 +34,7 @@ function writeStorage(key: string, value: unknown) {
 
 /**
  * Store em memória espelhado no localStorage. Usado só para o que ainda não tem API
- * (funcionalidades da Sprint 2) e para preferências do aparelho (ex.: região escolhida).
+ * e para preferências do aparelho (ex.: região escolhida).
  * Dados da Sprint 1 vêm sempre do backend.
  */
 export function createPersistentStore<T>(name: string, initial: T): Store<T> {
@@ -68,7 +68,7 @@ export function useStore<T>(store: Store<T>): T {
   return useSyncExternalStore(store.subscribe, store.get);
 }
 
-/** Apaga os dados locais (mocks da Sprint 2 e preferências do aparelho). */
+/** Apaga os dados locais (preferências do aparelho). */
 export function resetPersistentStores() {
   Object.keys(localStorage)
     .filter(key => key.startsWith(STORAGE_PREFIX))

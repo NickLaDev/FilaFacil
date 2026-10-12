@@ -20,6 +20,7 @@ export function useCartSummary() {
       finalPrice: 0,
       available: menu === undefined,
       promotion: null,
+      topSeller: false,
     };
     return { ...line, item };
   });

@@ -5,7 +5,7 @@ Sistema de gerenciamento de filas e pedidos para bares e restaurantes. O cliente
 Este é o repositório único do projeto (monorepo pnpm):
 
 - **Sprint 1** — frontend + **backend real** (API NestJS, PostgreSQL, autenticação, autorização, tempo real e testes).
-- **Sprint 2** — frontend pronto; os dados dessas fichas ainda são simulados no navegador até o backend correspondente.
+- **Sprint 2, blocos 1 a 3** — todas as 14 fichas têm backend e estão integradas à API (pagamento por gateway simulado).
 
 > A interface exibe a marca **FilaZero**, nome usado no protótipo e nas fichas. Para trocar, altere `apps/web/src/config/brand.ts`, `apps/api/src/common/brand.ts` e o `<title>` de `apps/web/index.html`.
 
@@ -107,7 +107,19 @@ Todas com a senha **`FilaFacil123`** (somente desenvolvimento — o seed se recu
 
 **Login por celular/e-mail com código:** em desenvolvimento o código (aleatório, 6 dígitos) aparece no **terminal da API** (`[SMS dev]` / `[E-mail dev]`). Não existe código fixo.
 
-Os fluxos simulados da Sprint 2 (confirmação de contato, recuperação de senha, exclusão de conta) aceitam o código `123456` e não alteram nada no servidor.
+Recuperação de senha, exclusão de conta e confirmação de e-mail/celular são reais: o código chega pelo mesmo canal do login (log da API em desenvolvimento) e a verificação fica gravada no banco.
+
+## Pagamento simulado (demonstração)
+
+O `.env` gerado por `pnpm setup:env` já liga o gateway simulado (`PAYMENT_PROVIDER=simulated` + `ALLOW_SIMULATED_PAYMENTS=true`): basta subir o banco e a API, sem conta nem credencial. **É um simulador, não uma integração com instituição financeira: nenhum dinheiro é movido, as transações não têm valor financeiro e a tela e o comprovante trazem a faixa "Pagamento simulado" / "Transação simulada — sem valor financeiro".** A API não sobe com o simulador em `NODE_ENV=production`, e o padrão do código é `none`.
+
+1. **Verificar a conta (obrigatório para pagar).** O cliente do seed (`joao@email.com`) já vem verificado. Para uma conta nova, no checkout toque em "Verificar agora": o código de 6 dígitos aparece no **terminal da API** (`[E-mail dev]`, com `EMAIL_PROVIDER=dev`). Sem SMTP nem SMS.
+2. **Cartão (crédito ou débito):** não há campos de cartão; escolha um cenário — *aprovado* (pedido vai para a cozinha na hora), *recusado* (dá para tentar de novo no mesmo pedido) ou *falha de processamento* (502, nada é cobrado, dá para tentar de novo).
+3. **Pix:** "Gerar Pix" cria uma cobrança pendente com uma referência claramente falsa (`SIMULADO-NAO-PAGAVEL-…`, não é Pix de verdade). Toque em **"Simular pagamento do Pix"** (só o dono do pedido): o pagamento vira aprovado, o pedido vira pago e o atendente o vê em Pedidos.
+4. **Comprovante:** Pedidos → pedido → "Ver comprovante" (fica no histórico, inclusive depois de estornado).
+5. **Estorno:** entre como gestor (`lucas@bardomestre.com.br`), abra Pedidos no painel do atendente (`/atendente`) e use o botão de estorno em um pedido pago; atendente sem permissão não vê o botão. O pedido vai para *cancelado* e o pagamento para *estornado*; um segundo estorno é recusado.
+
+O estado do "provedor" simulado fica num espelho em memória; o PostgreSQL é a verdade. Se a API reiniciar, o espelho é reconstruído a partir da tabela `payments` e um Pix pendente continua podendo ser confirmado.
 
 ## Perfis e rotas
 
@@ -142,9 +154,9 @@ Em `pnpm dev`, o botão **DEV** alterna entre os perfis. Os perfis compartilham 
 | 36 · Usuários (admin) | Filtro por papel, edição de papel, permissões e vínculos, suspensão com perda imediata de acesso, histórico com antes e depois |
 | 37 · Planos (admin) | CRUD de planos, preço, limites e recursos; trocar o plano libera ou bloqueia recursos na API na hora |
 
-### Sprint 2 — frontend pronto, dados ainda simulados
+### Sprint 2 — integrada à API
 
-QR Code da mesa (02), pagamento (04), carrinho (08), acompanhamento do pedido (09), mapa de mesas com reservada/chamado (16), recuperação de senha (44), favoritos (45), "+ pedido" (46), mesclagem de mesas (47), exclusão LGPD (53), biometria (59), filtro múltiplo de categorias (60), duplicação de planta (61, usando a gravação de planta da Sprint 1) e verificação de contato (65). Detalhes em [O que ainda é simulado](#o-que-ainda-é-simulado).
+Blocos 1 a 3 com backend: QR Code da mesa (02), pagamento (04), carrinho (08), acompanhamento do pedido (09), mapa de mesas com reservada/chamado (16), recuperação de senha (44), favoritos (45), "+ pedido" (46), mesclagem de mesas (47), exclusão LGPD (53), biometria (59), filtro múltiplo de categorias (60), duplicação de planta (61) e verificação de contato (65). Pendências em [O que ainda é simulado](#o-que-ainda-é-simulado).
 
 ## Arquitetura
 
@@ -241,6 +253,7 @@ Schema em `apps/api/prisma/schema.prisma` e migrations em `apps/api/prisma/migra
 | Cardápio | `menu_categories`, `menu_items`, `menu_item_availability_changes`, `promotions`, `promotion_items` |
 | Fichas técnicas | `ingredients`, `technical_sheets`, `technical_sheet_items` |
 | Salão e fila | `floor_plans`, `dining_tables`, `waitlist_entries`, `waitlist_notifications` |
+| Sprint 2, blocos 2 e 3 | `favorites`, `passkeys`, `webauthn_challenges`, `table_groups`, `table_calls`, `table_reservations`, `menu_item_rankings`, `ranking_runs` |
 | Auditoria | `permission_audit_logs` |
 
 Todas as datas são `timestamptz`. O horário de funcionamento é guardado em minutos no fuso IANA do estabelecimento.
@@ -279,6 +292,7 @@ pnpm test
 | Login com Apple | `APPLE_CLIENT_ID` (Services ID), `APPLE_TEAM_ID`, `APPLE_KEY_ID` e `APPLE_PRIVATE_KEY` (.p8); a Apple exige domínio HTTPS público para o retorno |
 | SMS (login por celular e aviso da fila) | Contratar um provedor (ex.: Twilio, Zenvia) e implementar `SmsSender` em `apps/api/src/modules/notifications` |
 | E-mail (login por código) | Provedor transacional (ex.: SES, Resend) implementando `EmailSender` |
+| Biometria (WebAuthn) | HTTPS (ou localhost); `WEBAUTHN_RP_ID` opcional (padrão: host de `WEB_ORIGIN`; trocar invalida credenciais). Testado só com autenticador de software |
 | Imagens em produção | S3/R2/MinIO implementando `FileStorage` (`apps/api/src/modules/storage`) |
 | Endereço digitado → coordenadas | Serviço de geocodificação; hoje a escolha manual usa uma lista de regiões com coordenadas |
 
@@ -286,10 +300,5 @@ pnpm test
 
 Somente funcionalidades da Sprint 2 ou que dependem de credencial externa:
 
-- Pedidos, carrinho, pagamento e acompanhamento (`orderService`), com histórico de exemplo do cliente do seed.
-- QR Code da mesa: os códigos do seed são resolvidos por um diretório local (`data/qrDirectory.ts`); o estabelecimento e o cardápio vêm da API.
-- Status reservada/chamado e a ocupação gerada por pedidos simulados no mapa do atendente (livre/ocupada vem do servidor).
-- Mesclagem de mesas, destaque "+ pedido" e favoritos.
-- Confirmação de e-mail/telefone, recuperação de senha e exclusão de conta (esta só encerra a sessão).
-- Biometria: o atalho pede a biometria do aparelho, mas abrir sessão exige WebAuthn no servidor (Sprint 2).
-- Google/Apple e SMS/e-mail reais dependem das credenciais acima.
+- Nada das fichas 16, 44, 45, 46, 47, 53, 59, 60 e 61 é simulado: todas têm backend (ver `docs/decisoes.md`, Sprint 2 blocos 2 e 3). Falta validar em aparelho real a biometria (WebAuthn) e a entrega real de e-mail/SMS.
+- Google/Apple, SMS e o pagamento real (Mercado Pago) dependem de credenciais externas (ver `.env.example`). Para demonstração existe o **pagamento simulado** (seção abaixo), que não precisa de credencial. Com `PAYMENT_PROVIDER=none` o pagamento responde 503. SMS real ainda não tem provider; o e-mail real usa SMTP (`EMAIL_PROVIDER=smtp`).

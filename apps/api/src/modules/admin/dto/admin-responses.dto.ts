@@ -58,6 +58,7 @@ export class AdminEstablishmentResponseDto implements AdminEstablishmentDto {
   foodCategories!: string[];
   tags!: string[];
   averageWaitMinutes!: number;
+  pickupPoint!: string;
   ordersPaused!: boolean;
   highDemand!: boolean;
   rating!: number;

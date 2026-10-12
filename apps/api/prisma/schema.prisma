@@ -53,19 +53,28 @@ model User {
   termsAcceptedAt DateTime?  @map("terms_accepted_at") @db.Timestamptz(3)
   marketingOptIn  Boolean    @default(false) @map("marketing_opt_in")
   lastAccessAt    DateTime?  @map("last_access_at") @db.Timestamptz(3)
+  /// Conta excluída a pedido do titular (LGPD): dados pessoais anonimizados, pedidos mantidos sem identificação.
+  deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(3)
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  permissions          UserPermission[]
-  memberships          EstablishmentMembership[]
-  addresses            UserAddress[]
-  sessions             Session[]
-  authAccounts         AuthAccount[]
-  availabilityChanges  MenuItemAvailabilityChange[]
-  auditAsTarget        PermissionAuditLog[]         @relation("AuditTarget")
-  auditAsActor         PermissionAuditLog[]         @relation("AuditActor")
-  floorPlanUpdates     FloorPlan[]
-  waitlistEntries      WaitlistEntry[]
+  permissions         UserPermission[]
+  memberships         EstablishmentMembership[]
+  addresses           UserAddress[]
+  sessions            Session[]
+  authAccounts        AuthAccount[]
+  availabilityChanges MenuItemAvailabilityChange[]
+  auditAsTarget       PermissionAuditLog[]         @relation("AuditTarget")
+  auditAsActor        PermissionAuditLog[]         @relation("AuditActor")
+  floorPlanUpdates    FloorPlan[]
+  waitlistEntries     WaitlistEntry[] @relation("WaitlistCreatedBy")
+  customerWaitlist    WaitlistEntry[] @relation("WaitlistCustomer")
+  orders              Order[]
+  otpChallenges       OtpChallenge[]
+  favorites           Favorite[]
+  passkeys            Passkey[]
+  webauthnChallenges  WebAuthnChallenge[]
+  tableCalls          TableCall[]
 
   @@index([role, status])
   @@index([createdAt])
@@ -146,10 +155,24 @@ enum OtpChannel {
   @@map("otp_channel")
 }
 
+/// Para que o código foi emitido: um código de verificação de contato não abre sessão, e vice-versa.
+enum OtpPurpose {
+  login
+  contact_verification
+  password_reset
+  account_deletion
+  passkey_registration
+
+  @@map("otp_purpose")
+}
+
 /// Desafio de código de uso único. O código nunca é salvo: só o HMAC.
 model OtpChallenge {
   id          String     @id @default(uuid()) @db.Uuid
   channel     OtpChannel
+  purpose     OtpPurpose @default(login)
+  /// Dono do desafio (verificação de contato: só ele pode confirmar o código).
+  userId      String?    @map("user_id") @db.Uuid
   destination String     @db.VarChar(254)
   codeHash    String     @map("code_hash") @db.Char(64)
   attempts    Int        @default(0)
@@ -158,7 +181,10 @@ model OtpChallenge {
   ipAddress   String?    @map("ip_address") @db.VarChar(64)
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([channel, destination, createdAt])
+  @@index([userId])
   @@map("otp_challenges")
 }
 
@@ -196,6 +222,47 @@ model OAuthState {
 
   @@index([expiresAt])
   @@map("oauth_states")
+}
+
+/// Credencial WebAuthn (biometria/passkey) de um aparelho. Só a chave pública é guardada.
+model Passkey {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  credentialId String    @unique @map("credential_id") @db.VarChar(512)
+  publicKey    Bytes     @map("public_key")
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  deviceName   String    @default("Este aparelho") @map("device_name") @db.VarChar(60)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("passkeys")
+}
+
+enum WebAuthnPurpose {
+  registration
+  authentication
+
+  @@map("webauthn_purpose")
+}
+
+/// Desafio WebAuthn emitido pelo servidor. Uso único e curto: é apagado ao ser verificado.
+model WebAuthnChallenge {
+  id        String          @id @default(uuid()) @db.Uuid
+  purpose   WebAuthnPurpose
+  /// Registro: dono do desafio. Login: nulo (credencial descoberta pelo aparelho).
+  userId    String?         @map("user_id") @db.Uuid
+  challenge String          @db.VarChar(256)
+  expiresAt DateTime        @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("webauthn_challenges")
 }
 
 // ─── Planos ─────────────────────────────────────────────────────────────────
@@ -289,11 +356,13 @@ model Establishment {
   averageWaitMinutes Int                 @default(15) @map("average_wait_minutes")
   ordersPaused       Boolean             @default(false) @map("orders_paused")
   highDemand         Boolean             @default(false) @map("high_demand")
+  /// Onde o cliente retira o pedido pronto (ex.: "Balcão 2").
+  pickupPoint        String              @default("Balcão") @map("pickup_point") @db.VarChar(60)
   createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization    Organization              @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  plan            Plan                      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  organization    Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plan            Plan                         @relation(fields: [planId], references: [id], onDelete: Restrict)
   photos          EstablishmentPhoto[]
   openingHours    OpeningHour[]
   memberships     EstablishmentMembership[]
@@ -305,11 +374,31 @@ model Establishment {
   diningTables    DiningTable[]
   waitlistEntries WaitlistEntry[]
   availabilityLog MenuItemAvailabilityChange[]
+  orders          Order[]
+  favoritedBy     Favorite[]
+  tableCalls      TableCall[]
+  tableGroups     TableGroup[]
+  tableReservations TableReservation[]
+  itemRankings    MenuItemRanking[]
 
   @@index([status, latitude, longitude])
   @@index([organizationId])
   @@index([planId])
   @@map("establishments")
+}
+
+/// Restaurantes favoritos da conta (sincronizados entre aparelhos).
+model Favorite {
+  userId          String   @map("user_id") @db.Uuid
+  establishmentId String   @map("establishment_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, establishmentId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("favorites")
 }
 
 model EstablishmentPhoto {
@@ -372,18 +461,45 @@ model MenuItem {
   position        Int
   /// Exclusão lógica: o item some do cardápio, mas o histórico (disponibilidade, futuros pedidos) continua íntegro.
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
+  /// Destaque manual do gestor (ficha 46).
+  highlighted     Boolean   @default(false)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  ranking             MenuItemRanking?
   establishment       Establishment                @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
   category            MenuCategory                 @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   availabilityChanges MenuItemAvailabilityChange[]
   promotionItems      PromotionItem[]
   technicalSheet      TechnicalSheet?
+  orderItems          OrderItem[]
 
   @@index([establishmentId, deletedAt, available])
   @@index([categoryId])
   @@map("menu_items")
+}
+
+/// Ranking semanal dos itens mais pedidos (ficha 46): pedidos pagos dos últimos 30 dias, recalculado toda semana.
+model MenuItemRanking {
+  menuItemId      String   @id @map("menu_item_id") @db.Uuid
+  establishmentId String   @map("establishment_id") @db.Uuid
+  rank            Int
+  quantity        Int
+  calculatedAt    DateTime @map("calculated_at") @db.Timestamptz(3)
+
+  menuItem      MenuItem      @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@index([establishmentId, rank])
+  @@map("menu_item_rankings")
+}
+
+/// Registro da última execução do recálculo semanal (uma linha, id = 1): evita recalcular a cada reinício.
+model RankingRun {
+  id    Int      @id
+  ranAt DateTime @map("ran_at") @db.Timestamptz(3)
+
+  @@map("ranking_runs")
 }
 
 model MenuItemAvailabilityChange {
@@ -543,15 +659,76 @@ model DiningTable {
   occupancy         TableOccupancy @default(free)
   occupiedPartySize Int?           @map("occupied_party_size") @db.SmallInt
   occupiedSince     DateTime?      @map("occupied_since") @db.Timestamptz(3)
+  /// Mesas mescladas (ficha 47) compartilham o mesmo grupo; sair do grupo restaura a mesa individual.
+  groupId           String?        @map("group_id") @db.Uuid
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   floorPlan     FloorPlan     @relation(fields: [floorPlanId], references: [id], onDelete: Cascade)
   establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  orders        Order[]
+  group         TableGroup?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  calls         TableCall[]
+  reservations  TableReservation[]
 
   @@unique([floorPlanId, label])
   @@index([establishmentId, occupancy])
+  @@index([groupId])
   @@map("dining_tables")
+}
+
+/// Mesas mescladas numa só unidade (capacidade somada, uma conta). Desfazer apaga o grupo.
+model TableGroup {
+  id              String   @id @default(uuid()) @db.Uuid
+  establishmentId String   @map("establishment_id") @db.Uuid
+  createdById     String?  @map("created_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  tables        DiningTable[]
+
+  @@index([establishmentId])
+  @@map("table_groups")
+}
+
+/// Chamado de atendimento feito pelo cliente. Aberto até a equipe resolver.
+model TableCall {
+  id              String    @id @default(uuid()) @db.Uuid
+  establishmentId String    @map("establishment_id") @db.Uuid
+  tableId         String    @map("table_id") @db.Uuid
+  userId          String?   @map("user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolvedById    String?   @map("resolved_by_id") @db.Uuid
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  table         DiningTable   @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// No máximo um chamado aberto por mesa (índice parcial na migration).
+  @@index([tableId, resolvedAt])
+  @@index([establishmentId, resolvedAt])
+  @@map("table_calls")
+}
+
+/// Reserva de mesa feita pela equipe. A mesa fica "reservada" até a reserva ser cancelada ou a mesa ser ocupada.
+model TableReservation {
+  id              String    @id @default(uuid()) @db.Uuid
+  establishmentId String    @map("establishment_id") @db.Uuid
+  tableId         String    @map("table_id") @db.Uuid
+  name            String    @db.VarChar(80)
+  partySize       Int       @map("party_size") @db.SmallInt
+  reservedAt      DateTime  @map("reserved_at") @db.Timestamptz(3)
+  closedAt        DateTime? @map("closed_at") @db.Timestamptz(3)
+  createdById     String?   @map("created_by_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  table         DiningTable   @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId, closedAt])
+  @@index([establishmentId, closedAt])
+  @@map("table_reservations")
 }
 
 // ─── Fila de espera ─────────────────────────────────────────────────────────
@@ -582,13 +759,17 @@ model WaitlistEntry {
   notifiedTableIds   String[]       @default([]) @map("notified_table_ids") @db.Uuid
   closedAt           DateTime?      @map("closed_at") @db.Timestamptz(3)
   createdById        String?        @map("created_by_id") @db.Uuid
+  /// Cliente que entrou na fila pelo botão "Reservar" da página do restaurante (ficha 12); nulo quando a equipe cadastrou.
+  customerId         String?        @map("customer_id") @db.Uuid
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   establishment Establishment          @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
-  createdBy     User?                  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy     User?                  @relation("WaitlistCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  customer      User?                  @relation("WaitlistCustomer", fields: [customerId], references: [id], onDelete: SetNull)
   notifications WaitlistNotification[]
 
   @@index([establishmentId, status, position])
+  @@index([customerId, status])
   @@map("waitlist_entries")
 }
 
@@ -615,6 +796,117 @@ model WaitlistNotification {
 
   @@index([entryId])
   @@map("waitlist_notifications")
+}
+
+// ─── Pedidos e pagamentos ───────────────────────────────────────────────────
+
+enum OrderStatus {
+  /// Criado e aguardando pagamento.
+  received
+  paid
+  preparing
+  ready
+  delivered
+  cancelled
+
+  @@map("order_status")
+}
+
+enum PaymentMethod {
+  pix
+  credit
+  debit
+
+  @@map("payment_method")
+}
+
+enum PaymentStatus {
+  pending
+  approved
+  refused
+  expired
+  cancelled
+  refunded
+
+  @@map("payment_status")
+}
+
+model Order {
+  id              String      @id @default(uuid()) @db.Uuid
+  /// Número exibido ao cliente ("PEDIDO #184").
+  number          Int         @unique @default(autoincrement())
+  userId          String      @map("user_id") @db.Uuid
+  establishmentId String      @map("establishment_id") @db.Uuid
+  /// Mesa do QR Code. Se a mesa for removida da planta, o pedido continua com o nome em `tableLabel`.
+  tableId         String?     @map("table_id") @db.Uuid
+  tableLabel      String?     @map("table_label") @db.VarChar(30)
+  /// Gerado pelo app a cada tentativa de checkout: reenviar o pedido não o duplica.
+  clientRequestId String?     @map("client_request_id") @db.VarChar(64)
+  status          OrderStatus @default(received)
+  /// Total calculado pelo servidor (preços e promoções vigentes na criação).
+  totalCents      Int         @map("total_cents")
+  pickupCode      String      @map("pickup_code") @db.Char(4)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  table         DiningTable?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+  payments      Payment[]
+
+  @@unique([userId, clientRequestId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([establishmentId, status, createdAt])
+  @@map("orders")
+}
+
+/// Cópia do item no momento do pedido: nome e preço não mudam se o cardápio mudar depois.
+model OrderItem {
+  id             String @id @default(uuid()) @db.Uuid
+  orderId        String @map("order_id") @db.Uuid
+  menuItemId     String @map("menu_item_id") @db.Uuid
+  name           String @db.VarChar(80)
+  unitPriceCents Int    @map("unit_price_cents")
+  quantity       Int    @db.SmallInt
+  notes          String @default("") @db.VarChar(200)
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([menuItemId])
+  @@map("order_items")
+}
+
+/// Tentativa de pagamento no gateway. Só o gateway muda o status para aprovado/estornado.
+/// A linha é gravada ANTES de chamar o gateway e seu id é a referência externa e a chave de idempotência:
+/// `pending` sem `providerPaymentId` = resultado incerto, conciliado pelo servidor (nunca descartado).
+/// Índice parcial (migration): no máximo um pagamento `pending` ou `approved` por pedido.
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  orderId           String        @map("order_id") @db.Uuid
+  /// 1, 2, 3… por pedido; compõe a chave de idempotência enviada ao gateway.
+  attempt           Int
+  method            PaymentMethod
+  status            PaymentStatus @default(pending)
+  amountCents       Int           @map("amount_cents")
+  providerPaymentId String?       @unique @map("provider_payment_id") @db.VarChar(64)
+  pixCopyPaste      String?       @map("pix_copy_paste")
+  pixQrBase64       String?       @map("pix_qr_base64")
+  pixExpiresAt      DateTime?     @map("pix_expires_at") @db.Timestamptz(3)
+  failureReason     String?       @map("failure_reason") @db.VarChar(120)
+  approvedAt        DateTime?     @map("approved_at") @db.Timestamptz(3)
+  /// Estorno pedido ao gateway e ainda não confirmado: a idempotência e a conciliação dependem disto.
+  refundRequestedAt DateTime?     @map("refund_requested_at") @db.Timestamptz(3)
+  refundedAt        DateTime?     @map("refunded_at") @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, attempt])
+  @@map("payments")
 }
 
 // ─── Auditoria ──────────────────────────────────────────────────────────────

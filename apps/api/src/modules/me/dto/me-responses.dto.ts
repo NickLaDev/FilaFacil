@@ -27,6 +27,7 @@ export class AuthUserDto implements AuthUser {
   status!: UserStatus;
   emailVerified!: boolean;
   phoneVerified!: boolean;
+  hasPassword!: boolean;
   @ApiProperty({ enum: PERMISSION_KEYS, isArray: true })
   permissions!: Permission[];
   createdAt!: string;

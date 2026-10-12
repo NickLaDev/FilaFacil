@@ -1,12 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Clock, Copy, CreditCard, Loader2, MapPin, Minus, Plus, QrCode, ShieldAlert, ShoppingCart, Trash2, X, Zap } from 'lucide-react';
-import { cn, formatCurrency } from '@/lib/utils';
-import { formatCardExpiry, formatCardNumber, isValidCardExpiry, isValidCardNumber, onlyDigits } from '@/lib/validation';
+import { errorMessage, isApiError } from '@/lib/api/client';
+import { cn, formatCents, formatCurrency, formatTime } from '@/lib/utils';
+import { formatCardExpiry, formatCardNumber, formatCpf, isValidCardExpiry, isValidCardNumber, isValidCpf, onlyDigits } from '@/lib/validation';
 import { imageOrPlaceholder } from '@/lib/images';
 import { formatPhone } from '@/lib/validation';
 import { useRestaurantData } from '@/services/restaurantService';
-import { DECLINED_CARD_SUFFIX, getEstimatedTime, getOrderStatus, placeOrder, processPayment, useOrder, type CardInput } from '@/services/orderService';
-import type { PaymentMethod } from '@/types/order';
+import { CardError, isCardPaymentConfigured, tokenizeCard, type CardInput } from '@/services/mercadoPago';
+import { useAuthProviders } from '@/services/authService';
+import { queryClient } from '@/lib/api/queryClient';
+import { checkoutAttempt, createOrder, finishCheckout, formatEstimate, ordersKey, payOrder, simulatePixPayment, syncOrderPayment, useOrder } from '@/services/orderService';
+import type { CreatePaymentRequest, OrderDto, PaymentMethod } from '@/types/order';
 import { isAccountVerified, useClient } from '../clientContext';
 import { useCartSummary } from '../hooks/useCart';
 import { FixedBottom, ResultScreen, ScreenHeader } from '../components/Layout';
@@ -116,15 +121,59 @@ export function CartScreen() {
   );
 }
 
-const PIX_MOCK_CODE = '00020126580014BR.GOV.BCB.PIX0136filazero-demo-pix-copia-e-cola5204000053039865802BR';
+type PaymentView = 'form' | 'processing' | 'pending' | 'error';
 
-type PaymentView = 'form' | 'processing' | 'error';
+const EMPTY_CARD: CardInput = { number: '', holder: '', expiry: '', cvv: '', cpf: '' };
 
-const EMPTY_CARD: CardInput = { number: '', holder: '', expiry: '', cvv: '' };
+/** Mensagens para os motivos de recusa mais comuns informados pelo gateway. */
+function refusalMessage(reason: string | null) {
+  if (reason === 'cc_rejected_insufficient_amount') return 'Saldo ou limite insuficiente.';
+  if (reason?.startsWith('cc_rejected_bad_filled')) return 'Confira os dados do cartão.';
+  if (reason === 'cc_rejected_call_for_authorize' || reason === 'cc_rejected_card_disabled') return 'Cartão não autorizado. Fale com o banco.';
+  return 'Pagamento recusado pela operadora do cartão.';
+}
+
+/** Cenários do cartão simulado (o cenário vai como `cardToken`; nenhum dado de cartão é digitado). */
+const SIMULATED_SCENARIOS = [
+  { id: 'sim_approved', label: 'Pagamento aprovado', hint: 'O pedido vai para a cozinha na hora.' },
+  { id: 'sim_refused', label: 'Pagamento recusado', hint: 'Saldo ou limite insuficiente: dá para tentar de novo.' },
+  { id: 'sim_error', label: 'Falha de processamento', hint: 'Erro no provedor: nada é cobrado e dá para tentar de novo.' },
+] as const;
+
+type SimulatedScenario = (typeof SIMULATED_SCENARIOS)[number]['id'];
+
+/** Aviso fixo: nenhuma transação simulada tem valor financeiro. */
+function SimulationBanner() {
+  return (
+    <div role="note" className="bg-warning-bg border border-warning/30 rounded-xl px-4 py-3 flex gap-2">
+      <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+      <p className="text-xs text-warning leading-relaxed">
+        <strong>Pagamento simulado</strong> — ambiente de demonstração. Nenhum dinheiro é movido e a transação não tem valor financeiro.
+      </p>
+    </div>
+  );
+}
+
+function ScenarioSelector({ value, onChange }: { value: SimulatedScenario; onChange: (value: SimulatedScenario) => void }) {
+  return (
+    <fieldset className="bg-card rounded-xl border border-border p-4 flex flex-col gap-3">
+      <legend className="text-xs uppercase tracking-wider text-muted-foreground font-medium px-1">Cenário do teste (sem dados de cartão)</legend>
+      {SIMULATED_SCENARIOS.map(scenario => (
+        <label key={scenario.id} className={cn('flex items-start gap-3 rounded-lg border p-3 cursor-pointer', value === scenario.id ? 'border-primary bg-primary/5' : 'border-border')}>
+          <input type="radio" name="simulated-scenario" checked={value === scenario.id} onChange={() => onChange(scenario.id)} className="mt-1 accent-primary" />
+          <span>
+            <span className="block text-sm font-medium text-foreground">{scenario.label}</span>
+            <span className="block text-xs text-muted-foreground">{scenario.hint}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
 
 /** Pagamento por Pix ou cartão crédito/débito pelo app (ficha 04). */
 export function PaymentScreen() {
-  const { go, account, table, cartEstablishmentId, clearCart, openOrder, requestVerification, showToast } = useClient();
+  const { go, account, table, cart, cartEstablishmentId, clearCart, openOrder, requestVerification } = useClient();
   const { lines, total, count, hasUnavailable } = useCartSummary();
   const establishment = useRestaurantData(cartEstablishmentId);
   const [method, setMethod] = useState<PaymentMethod>('pix');
@@ -132,6 +181,11 @@ export function PaymentScreen() {
   const [cardError, setCardError] = useState('');
   const [view, setView] = useState<PaymentView>('form');
   const [failureReason, setFailureReason] = useState('');
+  const [pendingOrder, setPendingOrder] = useState<OrderDto | null>(null);
+  const [scenario, setScenario] = useState<SimulatedScenario>('sim_approved');
+  const provider = useAuthProviders().data?.paymentProvider;
+  const simulated = provider === 'simulated';
+  const paymentUnavailable = provider === 'none';
 
   if (!account || !establishment) return null;
 
@@ -161,6 +215,13 @@ export function PaymentScreen() {
     );
   }
 
+  function paid(order: Pick<OrderDto, 'id'>) {
+    setCard(EMPTY_CARD);
+    finishCheckout();
+    clearCart();
+    openOrder(order.id, 'order-confirmed');
+  }
+
   if (view === 'processing') {
     return (
       <ResultScreen
@@ -171,11 +232,22 @@ export function PaymentScreen() {
     );
   }
 
+  if (view === 'pending' && pendingOrder) {
+    return (
+      <PendingPayment
+        order={pendingOrder}
+        onPaid={paid}
+        onChangeMethod={() => setView('form')}
+        onRetry={() => setView('form')}
+      />
+    );
+  }
+
   if (view === 'error') {
     return (
       <ResultScreen
         icon={<div className="w-20 h-20 rounded-2xl bg-error-bg flex items-center justify-center"><X size={36} className="text-error" /></div>}
-        title="Pagamento recusado"
+        title="Pagamento não concluído"
         description={<>{failureReason} Nenhum valor foi cobrado e seu carrinho foi mantido.</>}
       >
         <button onClick={() => setView('form')} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl">Tentar novamente</button>
@@ -189,43 +261,77 @@ export function PaymentScreen() {
     if (card.holder.trim().length < 3) return 'Informe o nome impresso no cartão.';
     if (!isValidCardExpiry(card.expiry, new Date())) return 'Validade inválida ou vencida.';
     if (!/^\d{3,4}$/.test(card.cvv)) return 'CVV inválido.';
+    if (!isValidCpf(card.cpf)) return 'CPF do titular inválido.';
     return '';
+  }
+
+  /** Mostra o motivo e mantém o carrinho; o pedido já criado é reaproveitado na próxima tentativa. */
+  function fail(message: string, { newOrder = false } = {}) {
+    if (newOrder) finishCheckout();
+    setFailureReason(message);
+    setView('error');
   }
 
   async function pay() {
     if (!account || !establishment) return;
-    if (method !== 'pix') {
+    let request: CreatePaymentRequest = { method };
+    if (method !== 'pix' && simulated) {
+      // Demonstração: o cenário escolhido vai no lugar do token do cartão (nenhum dado de cartão existe).
+      request = { method, cardToken: scenario, paymentMethodId: 'simulated' };
+      setView('processing');
+    } else if (method !== 'pix') {
       const error = validateCard();
       setCardError(error);
       if (error) return;
+      setView('processing');
+      try {
+        request = { method, ...(await tokenizeCard(card, method)) };
+      } catch (failure) {
+        setCardError(failure instanceof CardError ? failure.message : 'Não foi possível validar o cartão.');
+        setView('form');
+        return;
+      }
+    } else {
+      setView('processing');
     }
-    setView('processing');
-    const result = await processPayment(method, method === 'pix' ? undefined : card);
-    if (!result.ok) {
-      setFailureReason(result.reason);
-      setView('error');
-      return;
-    }
-    const order = placeOrder({
-      accountId: account.id,
-      establishmentId: establishment.id,
-      establishmentName: establishment.name,
-      table: table && table.establishmentId === establishment.id ? { id: table.tableId, label: table.tableLabel } : undefined,
-      paymentMethod: method,
-      transactionId: result.transactionId,
-      lines: lines.map(line => ({ menuItemId: line.itemId, name: line.item.name, quantity: line.quantity, unitPrice: line.item.finalPrice, notes: line.notes })),
-    });
-    setCard(EMPTY_CARD);
-    clearCart();
-    openOrder(order.id, 'order-confirmed');
-  }
 
-  async function copyPixCode() {
+    // O total exibido vai junto no pedido e no pagamento: se o servidor tiver outro valor, nada é cobrado. O total
+    // também compõe o resumo do carrinho, então preço novo = nova tentativa (outro pedido), nunca o pedido velho.
+    const totalCents = Math.round(total * 100);
+    const signature = JSON.stringify([cartEstablishmentId, table?.tableId, totalCents, cart.map(line => [line.itemId, line.quantity, line.notes])]);
+    const attempt = checkoutAttempt(signature);
     try {
-      await navigator.clipboard.writeText(PIX_MOCK_CODE);
-      showToast('Código Pix copiado');
-    } catch {
-      showToast('Não foi possível copiar o código');
+      const orderId =
+        attempt.orderId ??
+        (
+          await createOrder({
+            establishmentId: establishment.id,
+            tableId: table && table.establishmentId === establishment.id ? table.tableId : undefined,
+            clientRequestId: attempt.clientRequestId,
+            expectedTotalCents: totalCents,
+            items: lines.map(line => ({ menuItemId: line.itemId, quantity: line.quantity, notes: line.notes })),
+          })
+        ).id;
+      attempt.orderId = orderId;
+      const order = await payOrder(orderId, { ...request, expectedTotalCents: totalCents });
+      setCard(EMPTY_CARD);
+      if (order.status === 'paid') return paid(order);
+      const status = order.payment?.status;
+      if (status === 'pending') {
+        setPendingOrder(order);
+        return setView('pending');
+      }
+      fail(status === 'refused' ? refusalMessage(order.payment?.failureReason ?? null) : 'O pagamento não foi concluído.');
+    } catch (failure) {
+      // Conflitos com o pedido guardado: o servidor explica e o próximo envio começa um pedido novo.
+      for (const code of ['PRICE_CHANGED', 'ORDER_TOTAL_CHANGED', 'ORDER_CONTENT_CHANGED', 'ORDER_EXPIRED', 'ITEM_UNAVAILABLE', 'ESTABLISHMENT_NOT_ACCEPTING_ORDERS']) {
+        if (isApiError(failure, code)) return fail(failure.message, { newOrder: true });
+      }
+      if (isApiError(failure, 'ALREADY_PAID') || isApiError(failure, 'ORDER_NOT_PAYABLE')) {
+        if (attempt.orderId) return paid({ id: attempt.orderId });
+      }
+      if (isApiError(failure, 'CONTACT_NOT_VERIFIED')) return fail('Confirme seu e-mail ou celular para pagar pelo app.');
+      fail(errorMessage(failure, 'Não foi possível processar o pagamento. Tente novamente.'));
     }
   }
 
@@ -234,6 +340,7 @@ export function PaymentScreen() {
     { id: 'credit', icon: CreditCard, label: 'Cartão de crédito', sub: 'Visa, Mastercard, Elo' },
     { id: 'debit', icon: CreditCard, label: 'Cartão de débito', sub: 'Débito à vista' },
   ];
+  const cardUnavailable = method !== 'pix' && !simulated && !isCardPaymentConfigured;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -262,17 +369,28 @@ export function PaymentScreen() {
           </button>
         ))}
 
+        {simulated && <SimulationBanner />}
+        {paymentUnavailable && (
+          <div className="bg-warning-bg border border-warning/20 rounded-xl p-4 flex gap-2">
+            <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-warning">O pagamento pelo app não está disponível no momento.</p>
+          </div>
+        )}
         {method === 'pix' ? (
-          <div className="bg-card rounded-xl border border-border p-5 flex flex-col items-center gap-3">
-            <div className="w-36 h-36 bg-foreground rounded-xl flex items-center justify-center">
-              <div className="w-28 h-28 bg-white rounded-lg flex items-center justify-center">
-                <QrCode size={80} className="text-foreground" />
-              </div>
-            </div>
-            <button onClick={copyPixCode} className="text-primary text-sm font-medium flex items-center gap-1.5">
-              <Copy size={14} />
-              Copiar código Pix
-            </button>
+          <div className="bg-card rounded-xl border border-border p-5 flex items-center gap-3">
+            <QrCode size={28} className="text-primary flex-shrink-0" />
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {simulated
+                ? 'Vamos gerar um Pix simulado. Na próxima etapa você confirma o pagamento com um botão de demonstração.'
+                : 'O QR Code e o código Pix copia e cola aparecem na próxima etapa, depois de confirmar.'}
+            </p>
+          </div>
+        ) : simulated ? (
+          <ScenarioSelector value={scenario} onChange={setScenario} />
+        ) : cardUnavailable ? (
+          <div className="bg-warning-bg border border-warning/20 rounded-xl p-4 flex gap-2">
+            <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-warning">O pagamento com cartão não está disponível neste ambiente. Use o Pix.</p>
           </div>
         ) : (
           <CardForm card={card} onChange={next => { setCard(next); setCardError(''); }} error={cardError} />
@@ -288,10 +406,119 @@ export function PaymentScreen() {
       </div>
 
       <FixedBottom>
-        <button onClick={pay} disabled={hasUnavailable || lines.length === 0} className="w-full bg-primary text-primary-foreground font-display font-bold py-4 rounded-xl text-base disabled:opacity-50">
-          {method === 'pix' ? 'Confirmar pagamento Pix' : `Pagar com ${PAYMENT_METHOD_LABELS[method].toLowerCase()}`}
+        <button onClick={() => void pay()} disabled={hasUnavailable || lines.length === 0 || cardUnavailable || paymentUnavailable} className="w-full bg-primary text-primary-foreground font-display font-bold py-4 rounded-xl text-base disabled:opacity-50">
+          {method === 'pix' ? 'Gerar Pix' : `Pagar com ${PAYMENT_METHOD_LABELS[method].toLowerCase()}`}
         </button>
       </FixedBottom>
+    </div>
+  );
+}
+
+/**
+ * Pagamento criado e ainda não confirmado (Pix aguardando o cliente pagar). O app pergunta ao servidor
+ * a cada poucos segundos — e o servidor consulta o Mercado Pago —, além de reagir ao aviso em tempo real.
+ */
+function PendingPayment({ order, onPaid, onChangeMethod, onRetry }: { order: OrderDto; onPaid: (order: OrderDto) => void; onChangeMethod: () => void; onRetry: () => void }) {
+  const { go, showToast } = useClient();
+  const sync = useQuery({
+    queryKey: [...ordersKey, order.id, 'sync'],
+    queryFn: () => syncOrderPayment(order.id),
+    refetchInterval: 4_000,
+    initialData: order,
+    staleTime: 0,
+  });
+  const current = sync.data;
+  const payment = current.payment;
+  const status = payment?.status;
+
+  useEffect(() => {
+    if (current.status === 'paid') onPaid(current);
+  }, [current, onPaid]);
+
+  const [confirming, setConfirming] = useState(false);
+
+  /** Demonstração: "o cliente paga o Pix". O servidor confirma e o resultado chega pela mesma consulta de sempre. */
+  async function simulatePix() {
+    setConfirming(true);
+    try {
+      const paid = await simulatePixPayment(order.id);
+      queryClient.setQueryData([...ordersKey, order.id, 'sync'], paid);
+    } catch (failure) {
+      showToast(errorMessage(failure, 'Não foi possível simular o pagamento.'));
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  async function copyPixCode() {
+    if (!payment?.pix) return;
+    try {
+      await navigator.clipboard.writeText(payment.pix.copyPaste);
+      showToast('Código Pix copiado');
+    } catch {
+      showToast('Não foi possível copiar o código');
+    }
+  }
+
+  if (status === 'expired' || status === 'cancelled' || status === 'refused') {
+    return (
+      <ResultScreen
+        icon={<div className="w-20 h-20 rounded-2xl bg-warning-bg flex items-center justify-center"><Clock size={36} className="text-warning" /></div>}
+        title={status === 'refused' ? 'Pagamento recusado' : 'Pix expirado'}
+        description="Nenhum valor foi cobrado. Gere um novo pagamento para continuar."
+      >
+        <button onClick={onRetry} className="w-full bg-primary text-primary-foreground font-display font-semibold py-4 rounded-xl">Tentar novamente</button>
+        <button onClick={() => go('cart')} className="text-muted-foreground text-sm">Voltar ao carrinho</button>
+      </ResultScreen>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <ScreenHeader title={payment?.pix ? 'Pagamento Pix' : 'Pagamento'} onBack={onChangeMethod} />
+      <div className="flex-1 px-4 py-6 flex flex-col items-center gap-4 text-center" aria-live="polite">
+        {payment?.simulated && <SimulationBanner />}
+        {payment?.pix && payment.simulated ? (
+          <div className="bg-card rounded-xl border border-dashed border-warning p-5 flex flex-col items-center gap-3 w-full">
+            <QrCode size={48} className="text-muted-foreground" />
+            <p className="text-xs uppercase tracking-wider text-warning font-bold">Pix simulado — não pagável</p>
+            <p className="font-mono text-xs text-foreground break-all">{payment.pix.copyPaste}</p>
+            <button
+              onClick={() => void simulatePix()}
+              disabled={confirming}
+              className="w-full bg-primary text-primary-foreground font-display font-semibold py-3 rounded-xl disabled:opacity-60"
+            >
+              {confirming ? 'Confirmando…' : 'Simular pagamento do Pix'}
+            </button>
+          </div>
+        ) : payment?.pix && (
+          <div className="bg-card rounded-xl border border-border p-5 flex flex-col items-center gap-3 w-full">
+            <div className="w-44 h-44 bg-white rounded-xl border border-border flex items-center justify-center overflow-hidden">
+              {payment.pix.qrBase64 ? (
+                <img src={`data:image/png;base64,${payment.pix.qrBase64}`} alt="QR Code do Pix" className="w-full h-full object-contain" />
+              ) : (
+                <QrCode size={80} className="text-foreground" />
+              )}
+            </div>
+            <button onClick={() => void copyPixCode()} className="text-primary text-sm font-medium flex items-center gap-1.5">
+              <Copy size={14} />
+              Copiar código Pix
+            </button>
+            {payment.pix.expiresAt && <p className="text-xs text-muted-foreground">Válido até {formatTime(payment.pix.expiresAt)}</p>}
+          </div>
+        )}
+        <p className="font-display font-bold text-foreground text-2xl">{formatCents(current.totalCents)}</p>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 size={16} className="animate-spin text-primary" />
+          <span>Aguardando a confirmação do pagamento…</span>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed max-w-xs">
+          {payment && !payment.pix && !payment.transactionId
+            ? 'Estamos confirmando seu pagamento com o banco. Não pague de novo: se a cobrança já foi feita, o pedido segue sozinho.'
+            : 'Assim que o banco confirmar, seu pedido vai para a cozinha. Você pode deixar esta tela aberta.'}
+        </p>
+        <button onClick={onChangeMethod} className="text-primary text-sm font-medium mt-2">Escolher outra forma de pagamento</button>
+      </div>
     </div>
   );
 }
@@ -328,23 +555,25 @@ function CardForm({ card, onChange, error }: { card: CardInput; onChange: (card:
           <input id="card-cvv" inputMode="numeric" autoComplete="cc-csc" type="password" value={card.cvv} onChange={e => onChange({ ...card, cvv: onlyDigits(e.target.value).slice(0, 4) })} placeholder="•••" className={inputClass} />
         </div>
       </div>
+      <div>
+        <label htmlFor="card-cpf" className="text-xs text-muted-foreground mb-1 block">CPF do titular</label>
+        <input id="card-cpf" inputMode="numeric" value={card.cpf} onChange={e => onChange({ ...card, cpf: formatCpf(e.target.value) })} placeholder="000.000.000-00" className={inputClass} />
+      </div>
       {error && (
         <p className="text-error text-xs flex items-center gap-1.5"><AlertTriangle size={12} />{error}</p>
       )}
       <p className="text-xs text-muted-foreground text-center leading-relaxed">
-        Os dados do cartão vão direto para o provedor de pagamentos e não ficam salvos no app.
+        Os dados do cartão vão direto para o Mercado Pago e não passam pelo servidor do app nem ficam salvos.
       </p>
-      {import.meta.env.DEV && (
-        <p className="text-[11px] text-muted-foreground text-center">Dev: 4111 1111 1111 1111 aprova · final {DECLINED_CARD_SUFFIX} (ex.: 4000 0000 0000 0002) recusa</p>
-      )}
     </div>
   );
 }
 
 export function OrderConfirmedScreen() {
   const { orderId, go } = useClient();
-  const order = useOrder(orderId);
+  const order = useOrder(orderId).data;
   if (!order) return null;
+  const estimate = formatEstimate(order);
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6 px-8">
       <div className="w-24 h-24 rounded-2xl bg-success-bg flex items-center justify-center">
@@ -356,10 +585,12 @@ export function OrderConfirmedScreen() {
         {order.tableLabel && <p className="text-sm text-muted-foreground mt-1">{order.establishmentName} · {order.tableLabel}</p>}
       </div>
       <div className="w-full flex flex-col gap-3">
-        <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-3">
-          <Clock size={18} className="text-primary" />
-          <div><p className="text-xs text-muted-foreground">Tempo estimado</p><p className="font-display font-bold text-foreground">{getEstimatedTime(getOrderStatus(order, Date.parse(order.createdAt)))}</p></div>
-        </div>
+        {estimate && (
+          <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-3">
+            <Clock size={18} className="text-primary" />
+            <div><p className="text-xs text-muted-foreground">Tempo estimado</p><p className="font-display font-bold text-foreground">{estimate}</p></div>
+          </div>
+        )}
         <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-3">
           <MapPin size={18} className="text-primary" />
           <div><p className="text-xs text-muted-foreground">Retirada</p><p className="font-display font-bold text-foreground">{order.pickupPoint}</p></div>

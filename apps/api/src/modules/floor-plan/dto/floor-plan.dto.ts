@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Length, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Length, Max, Min, ValidateNested } from 'class-validator';
 import { TABLE_SHAPES, type DiningTableDto, type FloorPlanDto, type TableOccupancyStatus, type TableShape } from '@filafacil/shared';
 import { Trim } from '../../../common/validation/transforms.js';
 
@@ -76,4 +76,15 @@ export class FloorPlanResponseDto implements FloorPlanDto {
   @ApiProperty({ type: [DiningTableResponseDto] })
   tables!: DiningTableResponseDto[];
   updatedAt!: string | null;
+}
+
+export class DuplicateFloorPlanDto {
+  /** Unidade que receberá uma cópia do layout (mesma organização). */
+  @IsUUID()
+  targetEstablishmentId!: string;
+
+  /** Substitui as mesas que o destino já tem; sem isso, destino com mesas responde 409. */
+  @IsOptional()
+  @IsBoolean()
+  replace?: boolean;
 }

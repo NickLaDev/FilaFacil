@@ -123,7 +123,7 @@ export function QRScannerScreen() {
             <p className="text-xs text-warning/80 mt-1 leading-relaxed">
               {scanner === 'denied'
                 ? 'Abra as configurações do navegador e permita o acesso à câmera para este site.'
-                : 'Este navegador não lê QR Code pela câmera. Digite o código impresso na mesa.'}
+                : 'Não foi possível usar a câmera neste navegador (a câmera exige conexão segura, HTTPS). Digite o código impresso na mesa.'}
             </p>
           </div>
         ) : (

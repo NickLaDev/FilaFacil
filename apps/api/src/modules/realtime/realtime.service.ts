@@ -46,10 +46,32 @@ export class RealtimeService {
 
   floorPlanUpdated(establishmentId: string) {
     this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.floorPlanUpdated, { establishmentId });
+    this.tablesUpdated(establishmentId);
+  }
+
+  /** Mapa de mesas mudou (chamado, ocupação, reserva, mescla, pagamento): a equipe recarrega o mapa. */
+  tablesUpdated(establishmentId: string) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.tablesUpdated, { establishmentId });
   }
 
   waitlistUpdated(establishmentId: string) {
     this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.waitlistUpdated, { establishmentId });
+  }
+
+  /** Pedido criado, pago ou com novo status: o cliente dono e a equipe da casa recarregam o pedido. */
+  orderUpdated(userId: string, establishmentId: string, orderId: string) {
+    const payload = { establishmentId, orderId };
+    this.emit(rooms.user(userId), REALTIME_EVENTS.orderUpdated, payload);
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.orderUpdated, payload);
+    this.tablesUpdated(establishmentId);
+  }
+
+  /** Papel, permissões ou vínculos do usuário mudaram: as conexões dele saem das salas da equipe na hora. */
+  staffAccessChanged(userId: string) {
+    const sockets = this.server?.in(rooms.user(userId)).fetchSockets();
+    void sockets?.then(list => {
+      for (const socket of list) for (const room of socket.rooms) if (room.startsWith('staff:')) socket.leave(room);
+    });
   }
 
   sessionRevoked(userId: string, reason: string) {

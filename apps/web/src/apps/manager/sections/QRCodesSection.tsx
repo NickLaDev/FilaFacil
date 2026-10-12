@@ -1,17 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { Copy, Eye, QrCode } from 'lucide-react';
 import { BrandMark } from '@/components/brand/Logo';
 import EmptyState from '@/components/ui/EmptyState';
 import Modal from '@/components/ui/Modal';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { BRAND } from '@/config/brand';
-import { cn } from '@/lib/utils';
-import { useFloorLayout } from '@/services/floorService';
+import { qrPayloadFor, useFloorLayout } from '@/services/floorService';
 import type { FloorTable } from '@/types/floor';
 import type { ManagerSectionProps } from '../types';
 
-/** Padrão ilustrativo do protótipo; a imagem real do QR seria gerada a partir do código. */
-const QR_PREVIEW_FILLED_CELLS = [0, 1, 4, 5, 2, 7, 8, 10, 12, 14];
+/** QR Code real da mesa: o conteúdo é o link do app com o código, que o leitor do cliente resolve na API. */
+function TableQr({ code, label }: { code: string; label: string }) {
+  const [image, setImage] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(qrPayloadFor(code), { errorCorrectionLevel: 'M', margin: 1, width: 240 })
+      .then(url => active && setImage(url))
+      .catch(() => active && setImage(null));
+    return () => {
+      active = false;
+    };
+  }, [code]);
+  return (
+    <div className="w-40 h-40 mx-auto bg-white rounded-xl flex items-center justify-center mb-3">
+      {image ? <img src={image} alt={`QR Code da ${label}`} className="w-full h-full" /> : <span className="text-xs text-muted-foreground">Gerando…</span>}
+    </div>
+  );
+}
 
 interface Props extends ManagerSectionProps {
   onOpenFloorPlan: () => void;
@@ -94,13 +110,7 @@ export default function QRCodesSection({ unit, notify, onOpenFloorPlan }: Props)
           <div className="border-2 border-dashed border-border rounded-xl p-6 text-center mb-5 bg-white">
             <p className="text-xs text-muted-foreground mb-1">{unit.name}</p>
             <p className="font-display font-bold text-foreground text-xl mb-4">{preview.label}</p>
-            <div className="w-28 h-28 mx-auto bg-foreground rounded-xl flex items-center justify-center mb-3" aria-hidden="true">
-              <div className="grid grid-cols-4 gap-0.5 p-2">
-                {Array.from({ length: 16 }, (_, index) => (
-                  <div key={index} className={cn('w-4 h-4 rounded-sm', QR_PREVIEW_FILLED_CELLS.includes(index) ? 'bg-white' : 'bg-foreground')} />
-                ))}
-              </div>
-            </div>
+            <TableQr code={preview.qrCode} label={preview.label} />
             <p className="font-mono text-sm text-foreground mb-3">{preview.qrCode}</p>
             <p className="text-sm text-foreground font-medium mb-1">Peça sem enfrentar fila</p>
             <p className="text-xs text-muted-foreground mb-3">Escaneie com seu celular</p>

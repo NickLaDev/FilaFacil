@@ -1,18 +1,16 @@
-// Sprint 2 (pedidos, pagamento e acompanhamento): ainda simulado no navegador, sem API.
-import { useMemo } from 'react';
-import { useNow } from '@/lib/hooks';
-import { createPersistentStore, useStore } from '@/lib/store';
+import { useQuery } from '@tanstack/react-query';
+import { REALTIME_EVENTS, type CreateOrderRequest, type CreatePaymentRequest, type OrderDto, type Page } from '@filafacil/shared';
+import { api } from '@/lib/api/client';
+import { queryClient } from '@/lib/api/queryClient';
+import { isRealtimeHealthy, useUserRealtime } from '@/lib/realtime';
 import { createId } from '@/lib/utils';
-import { onlyDigits } from '@/lib/validation';
-import { ORDERS } from '@/data/operations';
-import type { Order, OrderLine, OrderStatus, PaymentMethod } from '@/types/order';
-import { occupyTableLocally } from './floorService';
 
-const ordersStore = createPersistentStore('orders-v2', ORDERS);
-const DAY_MS = 24 * 60 * 60 * 1000;
-const POPULARITY_WINDOW_MS = 30 * DAY_MS;
+// Fichas 04, 08 e 09: pedidos, pagamento e andamento vêm da API (nada é simulado no navegador).
 
-export const ORDER_STEPS: { status: OrderStatus; label: string }[] = [
+export const ordersKey = ['orders'] as const;
+const orderKey = (orderId: string) => [...ordersKey, orderId] as const;
+
+export const ORDER_STEPS: { status: OrderDto['status']; label: string }[] = [
   { status: 'received', label: 'Pedido recebido' },
   { status: 'paid', label: 'Pagamento confirmado' },
   { status: 'preparing', label: 'Em preparo' },
@@ -20,116 +18,94 @@ export const ORDER_STEPS: { status: OrderStatus; label: string }[] = [
   { status: 'delivered', label: 'Entregue' },
 ];
 
+/** Pagamento aprovado e pedido ainda a caminho do cliente (pronto para a cozinha ou em preparo). */
+export const isOrderActive = (order: OrderDto) => order.status === 'paid' || order.status === 'preparing' || order.status === 'ready';
+
+/** Pedido criado mas ainda não pago aparece como "aguardando pagamento", não como "recebido". */
+export function orderStatusLabel(order: OrderDto) {
+  if (order.status === 'cancelled') return 'Cancelado';
+  if (order.status === 'received') return 'Aguardando pagamento';
+  return ORDER_STEPS.find(step => step.status === order.status)?.label ?? '';
+}
+
+const WAIT_RANGE_MINUTES = 5;
+
+/** Estimativa de preparo informada pela casa (mesma faixa exibida nos cards de restaurante). */
+export const formatEstimate = (order: Pick<OrderDto, 'estimatedMinutes'>) =>
+  order.estimatedMinutes === null ? null : `${order.estimatedMinutes}–${order.estimatedMinutes + WAIT_RANGE_MINUTES} min`;
+
 /**
- * Enquanto não existe backend/websocket, a "cozinha" é simulada: o status avança
- * pelo tempo decorrido desde o pedido. Trocar por eventos do servidor sem mexer nas telas.
+ * Meta: o cliente vê a mudança de status em até 5 s. Com o tempo real funcionando (conectado E autenticado) o
+ * aviso chega por push e a consulta é só rede de segurança; sem ele — queda, sessão não autenticada no socket —
+ * a API é consultada a cada 4 s.
  */
-const STATUS_REACHED_AFTER_MS: Record<OrderStatus, number> = {
-  received: 0,
-  paid: 2_000,
-  preparing: 12_000,
-  ready: 40_000,
-  delivered: 150_000,
-};
+const POLL_WITHOUT_REALTIME_MS = 4_000;
+const POLL_WITH_REALTIME_MS = 30_000;
+const pollInterval = (active: boolean) => (active ? (isRealtimeHealthy() ? POLL_WITH_REALTIME_MS : POLL_WITHOUT_REALTIME_MS) : false);
 
-export function getOrderStatus(order: Order, now: number): OrderStatus {
-  if (order.completed) return 'delivered';
-  const elapsed = now - Date.parse(order.createdAt);
-  return [...ORDER_STEPS].reverse().find(step => elapsed >= STATUS_REACHED_AFTER_MS[step.status])?.status ?? 'received';
+/** Atualiza o cache assim que a API avisa que um pedido mudou. */
+export function useOrderUpdates(enabled = true) {
+  useUserRealtime([REALTIME_EVENTS.orderUpdated], () => void queryClient.invalidateQueries({ queryKey: ordersKey }), enabled);
 }
 
-export function getEstimatedTime(status: OrderStatus) {
-  if (status === 'received' || status === 'paid') return '18–23 min';
-  if (status === 'preparing') return '10–15 min';
-  return null;
-}
-
+/** Pedidos da conta, do mais recente ao mais antigo. */
 export function useAccountOrders(accountId: string | null) {
-  const orders = useStore(ordersStore);
-  return useMemo(
-    () => orders.filter(o => o.accountId === accountId).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
-    [orders, accountId],
-  );
+  useOrderUpdates(Boolean(accountId));
+  return useQuery({
+    queryKey: [...ordersKey, 'list', accountId],
+    queryFn: ({ signal }) => api.get<Page<OrderDto>>('/orders', { pageSize: 100 }, signal),
+    enabled: Boolean(accountId),
+    refetchInterval: query => pollInterval(Boolean(query.state.data?.items.some(isOrderActive))),
+  });
 }
 
+/** Um pedido (rastreio, confirmação, comprovante). */
 export function useOrder(orderId: string | null) {
-  const orders = useStore(ordersStore);
-  return orders.find(o => o.id === orderId) ?? null;
+  useOrderUpdates(Boolean(orderId));
+  return useQuery({
+    queryKey: orderKey(orderId ?? ''),
+    queryFn: ({ signal }) => api.get<OrderDto>(`/orders/${orderId}`, undefined, signal),
+    enabled: Boolean(orderId),
+    refetchInterval: query => pollInterval(Boolean(query.state.data && (isOrderActive(query.state.data) || query.state.data.status === 'received'))),
+  });
 }
 
-export interface PlaceOrderInput {
-  accountId: string;
-  establishmentId: string;
-  establishmentName: string;
-  table?: { id: string; label: string };
-  lines: OrderLine[];
-  paymentMethod: PaymentMethod;
-  transactionId: string;
-}
-
-export function placeOrder(input: PlaceOrderInput): Order {
-  const orders = ordersStore.get();
-  const order: Order = {
-    id: createId('order'),
-    number: Math.max(183, ...orders.map(o => o.number)) + 1,
-    accountId: input.accountId,
-    establishmentId: input.establishmentId,
-    establishmentName: input.establishmentName,
-    tableId: input.table?.id,
-    tableLabel: input.table?.label,
-    lines: input.lines,
-    total: input.lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0),
-    paymentMethod: input.paymentMethod,
-    transactionId: input.transactionId,
-    pickupPoint: 'Balcão 2',
-    pickupCode: String(Math.floor(1000 + Math.random() * 9000)),
-    createdAt: new Date().toISOString(),
-  };
-  ordersStore.set(prev => [...prev, order]);
-  // Pedido vinculado à mesa marca a mesa como ocupada no mapa do atendente (ficha 16).
-  if (input.table) occupyTableLocally(input.table.id);
+function remember(order: OrderDto) {
+  queryClient.setQueryData(orderKey(order.id), order);
+  void queryClient.invalidateQueries({ queryKey: [...ordersKey, 'list'] });
   return order;
 }
 
-/** Quantidade pedida por item nos últimos 30 dias — base do selo "+ pedido" (ficha 46). */
-export function useItemOrderCounts() {
-  const orders = useStore(ordersStore);
-  const now = useNow(60 * 60 * 1000);
-  return useMemo(() => {
-    const since = now - POPULARITY_WINDOW_MS;
-    const counts = new Map<string, number>();
-    orders
-      .filter(order => Date.parse(order.createdAt) >= since)
-      .forEach(order => order.lines.forEach(line => counts.set(line.menuItemId, (counts.get(line.menuItemId) ?? 0) + line.quantity)));
-    return counts;
-  }, [orders, now]);
+// ─── Checkout ───────────────────────────────────────────────────────────────
+
+interface CheckoutAttempt {
+  /** Resumo do carrinho: mudou o carrinho, começa outro pedido. */
+  signature: string;
+  clientRequestId: string;
+  orderId: string | null;
 }
 
-// ─── Pagamento (gateway simulado) ───────────────────────────────────────────
+/**
+ * Tentativa de checkout em andamento. Fica fora do componente para sobreviver a sair e voltar da tela de
+ * pagamento: repetir a tentativa reaproveita o mesmo pedido (e a API também deduplica pelo identificador).
+ */
+let attempt: CheckoutAttempt | null = null;
 
-export interface CardInput {
-  number: string;
-  holder: string;
-  expiry: string;
-  cvv: string;
+export function checkoutAttempt(signature: string): CheckoutAttempt {
+  if (!attempt || attempt.signature !== signature) attempt = { signature, clientRequestId: createId('checkout'), orderId: null };
+  return attempt;
 }
 
-export type PaymentResult = { ok: true; transactionId: string } | { ok: false; reason: string };
+export const finishCheckout = () => {
+  attempt = null;
+};
 
-/** Final de cartão que o gateway simulado recusa — permite testar o fluxo de falha. */
-export const DECLINED_CARD_SUFFIX = '0002';
+export const createOrder = (request: CreateOrderRequest) => api.post<OrderDto>('/orders', request).then(remember);
 
-const PAYMENT_LATENCY_MS = 1800;
+export const payOrder = (orderId: string, request: CreatePaymentRequest) => api.post<OrderDto>(`/orders/${orderId}/payments`, request).then(remember);
 
-/** Dados de cartão nunca são persistidos; em produção vão tokenizados direto ao gateway. */
-export function processPayment(method: PaymentMethod, card?: CardInput): Promise<PaymentResult> {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      if (method !== 'pix' && card && onlyDigits(card.number).endsWith(DECLINED_CARD_SUFFIX)) {
-        resolve({ ok: false, reason: 'Pagamento recusado pela operadora do cartão.' });
-        return;
-      }
-      resolve({ ok: true, transactionId: `${method === 'pix' ? 'PIX' : 'CARD'}-${createId('tx').slice(3).toUpperCase()}` });
-    }, PAYMENT_LATENCY_MS);
-  });
-}
+/** Demonstração (só com o gateway simulado): o dono do pedido "paga" o Pix simulado; o servidor aplica o resultado. */
+export const simulatePixPayment = (orderId: string) => api.post<OrderDto>(`/orders/${orderId}/payments/demo-confirm`).then(remember);
+
+/** Consulta o gateway de pagamento pelo servidor (o webhook faz o mesmo quando consegue chegar). */
+export const syncOrderPayment = (orderId: string) => api.post<OrderDto>(`/orders/${orderId}/payments/sync`).then(remember);

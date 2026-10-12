@@ -73,3 +73,52 @@ export class OtpVerifyDto {
   @Matches(/^\d{6}$/, { message: 'O código tem 6 dígitos.' })
   code!: string;
 }
+
+export class ContactVerificationRequestDto {
+  @ApiProperty({ enum: ['phone', 'email'] })
+  @IsIn(['phone', 'email'])
+  channel!: OtpChannel;
+}
+
+export class ContactVerificationConfirmDto {
+  @IsUUID()
+  challengeId!: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'O código tem 6 dígitos.' })
+  code!: string;
+}
+
+export class PasswordResetRequestDto extends OtpRequestDto {}
+
+export class PasswordResetConfirmDto {
+  @IsUUID()
+  challengeId!: string;
+
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'O código tem 6 dígitos.' })
+  code!: string;
+
+  /** Mínimo 8 caracteres, com letra e número. */
+  @IsString()
+  @MaxLength(PASSWORD_MAX_LENGTH)
+  newPassword!: string;
+}
+
+export class DeleteAccountDto {
+  /** Senha atual (contas com senha). */
+  @IsOptional()
+  @IsString()
+  @Length(1, PASSWORD_MAX_LENGTH)
+  password?: string;
+
+  /** Alternativa à senha: desafio e código recebidos em `POST /me/delete-account/code`. */
+  @IsOptional()
+  @IsUUID()
+  challengeId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{6}$/, { message: 'O código tem 6 dígitos.' })
+  code?: string;
+}

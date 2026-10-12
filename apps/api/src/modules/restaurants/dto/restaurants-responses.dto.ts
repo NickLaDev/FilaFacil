@@ -8,6 +8,7 @@ import {
   type PublicMenu,
   type PublicMenuItem,
   type PublicPromotion,
+  type QrResolveDto,
   type RestaurantDetail,
   type RestaurantSummary,
 } from '@filafacil/shared';
@@ -62,6 +63,8 @@ export class RestaurantDetailDto extends RestaurantSummaryDto implements Restaur
   timezone!: string;
   @ApiProperty({ type: [OpeningHourResponseDto] })
   openingHours!: OpeningHourResponseDto[];
+  /** Mostra o botão "Reservar": restaurante aberto e plano com fila de espera. */
+  reservationsOpen!: boolean;
 }
 
 export class PublicPromotionDto implements PublicPromotion {
@@ -82,6 +85,10 @@ export class PublicMenuItemDto implements PublicMenuItem {
   finalPriceCents!: number;
   imageUrl!: string | null;
   promotion!: PublicPromotionDto | null;
+  /** Entre os mais vendidos dos últimos 30 dias (ficha 46). */
+  isTopOrdered!: boolean;
+  /** Destaque manual do gestor (ficha 46). */
+  isHighlighted!: boolean;
 }
 
 export class PublicCategoryDto {
@@ -95,4 +102,18 @@ export class PublicMenuDto implements PublicMenu {
   categories!: PublicCategoryDto[];
   @ApiProperty({ type: [PublicMenuItemDto] })
   items!: PublicMenuItemDto[];
+}
+
+export class QrResolveResponseDto implements QrResolveDto {
+  establishmentId!: string;
+  establishmentName!: string;
+  tableId!: string;
+  tableLabel!: string;
+  @ApiProperty({ enum: ORDERING_STATUSES })
+  orderingStatus!: OrderingStatus;
+  acceptingOrders!: boolean;
+}
+
+export class RestaurantCategoriesResponseDto {
+  categories!: string[];
 }

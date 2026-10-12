@@ -45,3 +45,8 @@ export class SetAvailabilityDto {
   @IsBoolean()
   available!: boolean;
 }
+
+export class SetHighlightDto {
+  @IsBoolean()
+  highlighted!: boolean;
+}

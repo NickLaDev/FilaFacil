@@ -1,12 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { isValidPhone, normalizePhone, type WaitlistDto, type WaitlistEntryDto } from '@filafacil/shared';
+import { isValidPhone, normalizePhone, type MyReservationDto, type MyReservationsDto, type MyReservationStateDto, type WaitlistDto, type WaitlistEntryDto } from '@filafacil/shared';
 import { BRAND_NAME } from '../../common/brand.js';
-import { badRequest, notFound } from '../../common/http/app-error.js';
+import { badRequest, conflict, forbidden, notFound } from '../../common/http/app-error.js';
 import { maskPhone } from '../../common/masking.js';
 import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import type { WaitlistEntry } from '../../generated/prisma/client.js';
+import { EntitlementsService } from '../access/entitlements.service.js';
+import { RestaurantsService } from '../restaurants/restaurants.service.js';
 import { SmsSender } from '../notifications/message-senders.js';
+import { tableScope } from '../tables/table-state.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import type { CreateWaitlistEntryDto } from './dto/waitlist.dto.js';
 import { estimateWaitMinutes, releasedTablesLabel } from './wait-estimate.js';
@@ -30,6 +33,8 @@ export class WaitlistService {
     private readonly prisma: PrismaService,
     private readonly sms: SmsSender,
     private readonly realtime: RealtimeService,
+    private readonly entitlements: EntitlementsService,
+    private readonly restaurants: RestaurantsService,
   ) {}
 
   private lock(tx: PrismaTx, establishmentId: string) {
@@ -55,29 +60,119 @@ export class WaitlistService {
   async add(establishmentId: string, dto: CreateWaitlistEntryDto, actorId: string): Promise<WaitlistEntryDto> {
     const phone = normalizePhone(dto.phone);
     if (!isValidPhone(phone)) throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [{ field: 'phone', message: 'Celular inválido.' }]);
+    return this.enqueue(establishmentId, { name: dto.name, phone, partySize: dto.partySize, createdById: actorId });
+  }
 
+  /** Entrada no fim da fila sob o lock da fila; `customerId` marca a reserva feita pelo próprio cliente. */
+  private async enqueue(
+    establishmentId: string,
+    data: { name: string; phone: string; partySize: number; createdById?: string; customerId?: string },
+  ): Promise<WaitlistEntryDto> {
     const created = await this.prisma.$transaction(async tx => {
       await this.lock(tx, establishmentId);
+      if (data.customerId) {
+        const existing = await tx.waitlistEntry.findFirst({
+          where: { establishmentId, customerId: data.customerId, status: { in: [...ACTIVE_STATUSES] } },
+          select: { id: true },
+        });
+        if (existing) throw conflict('ALREADY_RESERVED', 'Você já está na fila deste restaurante.');
+      }
       // Sequencial: uma transação usa uma única conexão.
       const entries = await this.activeEntries(tx, establishmentId);
       const freeTables = await this.freeTables(tx, establishmentId);
       const waitingAhead = entries.filter(entry => entry.status === 'waiting').length;
-      const compatible = freeTables.filter(table => table.capacity >= dto.partySize).length;
+      const compatible = freeTables.filter(table => table.capacity >= data.partySize).length;
       const entry = await tx.waitlistEntry.create({
         data: {
           establishmentId,
-          name: dto.name,
-          phone,
-          partySize: dto.partySize,
+          name: data.name,
+          phone: data.phone,
+          partySize: data.partySize,
           position: (entries.at(-1)?.position ?? 0) + 1,
           quotedWaitMinutes: estimateWaitMinutes(waitingAhead, compatible),
-          createdById: actorId,
+          createdById: data.createdById ?? null,
+          customerId: data.customerId ?? null,
         },
       });
       return { entry, entries: [...entries, entry], freeTables };
     });
     this.realtime.waitlistUpdated(establishmentId);
     return this.toDtos(created.entries, created.freeTables).find(entry => entry.id === created.entry.id) as WaitlistEntryDto;
+  }
+
+  // ─── Reserva do cliente (ficha 12) ─────────────────────────────────────────
+
+  /** Estado da reserva do cliente neste restaurante (botão "Reservar" / "Sua reserva"). */
+  async myReservation(establishmentId: string, userId: string): Promise<MyReservationStateDto> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { phone: true } });
+    const { entries } = await this.list(establishmentId);
+    const mine = await this.prisma.waitlistEntry.findFirst({
+      where: { establishmentId, customerId: userId, status: { in: [...ACTIVE_STATUSES] } },
+      select: { id: true },
+    });
+    const entry = entries.find(item => item.id === mine?.id);
+    return { hasPhone: Boolean(user.phone), reservation: entry ? this.toMyReservation(entry) : null };
+  }
+
+  /** Reservas ativas do cliente em todos os restaurantes (atalho do perfil). */
+  async myReservations(userId: string): Promise<MyReservationsDto> {
+    const mine = await this.prisma.waitlistEntry.findMany({
+      where: { customerId: userId, status: { in: [...ACTIVE_STATUSES] } },
+      orderBy: { joinedAt: 'desc' },
+      select: { id: true, establishmentId: true, establishment: { select: { name: true } } },
+    });
+    const items: MyReservationsDto['items'] = [];
+    for (const row of mine) {
+      const { entries } = await this.list(row.establishmentId);
+      const entry = entries.find(item => item.id === row.id);
+      if (entry) items.push({ ...this.toMyReservation(entry), restaurantId: row.establishmentId, restaurantName: row.establishment.name });
+    }
+    return { items };
+  }
+
+  /**
+   * "Reservar": o cliente logado entra no fim da fila de espera do restaurante (a mesma que a equipe
+   * gerencia na ficha 21), com o nome da conta e um celular para o aviso de mesa pronta.
+   */
+  async reserve(establishmentId: string, userId: string, input: { partySize: number; phone?: string }): Promise<MyReservationDto> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true, phone: true, role: true, deletedAt: true } });
+    if (user.role !== 'client' || user.deletedAt) throw forbidden('CLIENT_ONLY', 'Somente clientes podem reservar mesa.');
+    const detail = await this.restaurants.detail(establishmentId);
+    if (!detail.isOpenNow) throw conflict('RESTAURANT_CLOSED', 'O restaurante está fechado no momento.');
+    if (!(await this.entitlements.featuresFor(establishmentId)).has('waitlist')) {
+      throw conflict('RESERVATIONS_UNAVAILABLE', 'Este restaurante não aceita reservas pelo aplicativo.');
+    }
+    const phone = normalizePhone(input.phone ?? user.phone ?? '');
+    if (!isValidPhone(phone)) throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [{ field: 'phone', message: 'Informe um celular válido para o aviso.' }]);
+    const entry = await this.enqueue(establishmentId, { name: user.name, phone, partySize: input.partySize, customerId: userId });
+    return this.toMyReservation(entry);
+  }
+
+  /** Cliente desiste da reserva: sai da fila e as posições seguintes sobem. */
+  async cancelReservation(establishmentId: string, userId: string): Promise<void> {
+    await this.prisma.$transaction(async tx => {
+      await this.lock(tx, establishmentId);
+      const entry = await tx.waitlistEntry.findFirst({
+        where: { establishmentId, customerId: userId, status: { in: [...ACTIVE_STATUSES] } },
+        select: { id: true },
+      });
+      if (!entry) throw notFound('Você não tem reserva neste restaurante.');
+      await this.closeEntry(tx, establishmentId, entry.id, 'removed');
+    });
+    this.realtime.waitlistUpdated(establishmentId);
+  }
+
+  private toMyReservation(entry: WaitlistEntryDto): MyReservationDto {
+    return {
+      id: entry.id,
+      partySize: entry.partySize,
+      position: entry.position,
+      status: entry.status,
+      joinedAt: entry.joinedAt,
+      quotedWaitMinutes: entry.quotedWaitMinutes,
+      estimatedWaitMinutes: entry.estimatedWaitMinutes,
+      notifiedTableLabel: entry.notifiedTableLabel,
+    };
   }
 
   /** Reordenação manual: move o grupo para a posição pedida e reposiciona os demais. */
@@ -156,6 +251,11 @@ export class WaitlistService {
   async releaseTables(establishmentId: string, tableIds: string[]) {
     const result = await this.prisma.$transaction(async tx => {
       await this.lock(tx, establishmentId);
+      await lockResource(tx, `tables:${establishmentId}`);
+      // Mesa mesclada é liberada junto com o grupo todo.
+      const scopes = await Promise.all(tableIds.map(id => tableScope(tx, id, establishmentId)));
+      if (scopes.some(scope => scope.length === 0)) throw notFound('Mesa não encontrada neste estabelecimento.');
+      tableIds = [...new Set(scopes.flat())];
       const tables = await tx.diningTable.findMany({
         where: { id: { in: tableIds }, establishmentId },
         orderBy: { label: 'asc' },
@@ -247,6 +347,7 @@ export class WaitlistService {
         estimatedWaitMinutes: estimate,
         notifiedAt: entry.notifiedAt?.toISOString() ?? null,
         notifiedTableLabel: entry.notifiedTableLabel,
+        byCustomer: entry.customerId !== null,
       };
     });
   }

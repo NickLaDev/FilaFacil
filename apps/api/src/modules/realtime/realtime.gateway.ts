@@ -9,7 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { isUUID } from 'class-validator';
 import type { Namespace, Socket } from 'socket.io';
-import { REALTIME_NAMESPACE, STAFF_ROLES, type RealtimeSubscribeRequest } from '@filafacil/shared';
+import { REALTIME_EVENTS, REALTIME_NAMESPACE, STAFF_ROLES, type RealtimeSubscribeRequest } from '@filafacil/shared';
 import { PrismaService } from '../../database/prisma.service.js';
 import { ACCESS_COOKIE } from '../auth/auth-cookies.js';
 import type { AuthContext } from '../auth/auth.types.js';
@@ -51,7 +51,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
   }
 
   handleConnection(socket: Socket) {
-    (socket.data as SocketData).auth = this.authenticate(socket);
+    const auth = this.authenticate(socket);
+    (socket.data as SocketData).auth = auth;
+    // Avisa se a conexão tem sessão: uma conexão anônima fica "conectada", mas nunca recebe eventos da conta.
+    void auth.then(context => socket.emit(REALTIME_EVENTS.ready, { authenticated: context !== null }));
   }
 
   private async authenticate(socket: Socket): Promise<AuthContext | null> {
@@ -78,15 +81,42 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
     }
     if (typeof establishmentId === 'string' && isUUID(establishmentId)) {
       const auth = await (socket.data as SocketData).auth;
-      const allowed =
-        auth &&
-        STAFF_ROLES.includes(auth.role) &&
-        (await this.prisma.establishmentMembership.count({ where: { userId: auth.userId, establishmentId } })) > 0;
-      if (!allowed) return { ok: false };
+      if (!auth || !(await this.canJoinStaffRoom(auth, establishmentId))) return { ok: false };
       await socket.join(rooms.staff(establishmentId));
       return { ok: true };
     }
     return { ok: false };
+  }
+
+  /**
+   * Confere no banco, a cada assinatura (o contexto do handshake pode estar velho): sessão ativa, usuário não
+   * suspenso, papel e ao menos uma permissão de equipe, e vínculo atual com o estabelecimento.
+   */
+  private async canJoinStaffRoom(auth: AuthContext, establishmentId: string) {
+    const [session, user] = await Promise.all([
+      this.prisma.session.findUnique({ where: { id: auth.sessionId }, select: { revokedAt: true, expiresAt: true } }),
+      this.prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: {
+          status: true,
+          role: true,
+          deletedAt: true,
+          _count: { select: { permissions: true } },
+          memberships: { where: { establishmentId }, select: { userId: true } },
+        },
+      }),
+    ]);
+    return Boolean(
+      session &&
+        !session.revokedAt &&
+        session.expiresAt > new Date() &&
+        user &&
+        user.status === 'active' &&
+        !user.deletedAt &&
+        STAFF_ROLES.includes(user.role) &&
+        user._count.permissions > 0 &&
+        user.memberships.length > 0,
+    );
   }
 
   @SubscribeMessage('unsubscribe')

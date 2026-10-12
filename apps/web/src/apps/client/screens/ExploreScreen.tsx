@@ -3,7 +3,7 @@ import { ArrowUpDown, Check, ChevronLeft, Clock, Heart, List, Map as MapIcon, Ma
 import { imageOrPlaceholder } from '@/lib/images';
 import { cn } from '@/lib/utils';
 import { useClientLocation, type Coordinates } from '@/services/deviceService';
-import { useNearbyRestaurants, type Restaurant } from '@/services/restaurantService';
+import { useFoodCategories, useNearbyRestaurants, type Restaurant } from '@/services/restaurantService';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import Toggle from '@/components/ui/Toggle';
 import { useClient } from '../clientContext';
@@ -36,21 +36,18 @@ const SORTERS: Record<SortOption, ((a: Restaurant, b: Restaurant) => number) | n
   'Melhor avaliados': (a, b) => b.rating - a.rating,
 };
 
-function matchesFilters(r: Restaurant, query: string, quick: QuickFilter, filters: SheetFilters, favoriteIds: Set<string>) {
+function matchesFilters(r: Restaurant, query: string, quick: QuickFilter, filters: SheetFilters) {
   const q = query.trim().toLowerCase();
   const matchesQuery = !q || [r.name, r.typeLabel, ...r.tags, ...r.foodCategories].some(text => text.toLowerCase().includes(q));
   const closed = r.orderingStatus === 'closed';
   return (
     matchesQuery &&
-    (quick !== 'Favoritos' || favoriteIds.has(r.id)) &&
     (quick !== 'Aberto agora' || !closed) &&
     (quick !== 'Menor espera' || !closed) &&
     (!filters.openNow || !closed) &&
     (!filters.accepting || r.orderingStatus === 'open' || r.orderingStatus === 'busy') &&
     (filters.distance === 'any' || (r.distanceM ?? 0) <= Number(filters.distance) * 1000) &&
-    (filters.wait === 'any' || r.averageWaitMinutes <= Number(filters.wait)) &&
-    // Várias categorias ao mesmo tempo: basta o local ter uma delas (ficha 60).
-    (filters.categories.size === 0 || r.foodCategories.some(category => filters.categories.has(category)))
+    (filters.wait === 'any' || r.averageWaitMinutes <= Number(filters.wait))
   );
 }
 
@@ -58,7 +55,7 @@ function matchesFilters(r: Restaurant, query: string, quick: QuickFilter, filter
 export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilter?: QuickFilter }) {
   const { go, openEstablishment } = useClient();
   const location = useClientLocation();
-  const { favoriteIds, toggle: toggleFavorite, canFavorite } = useFavorites();
+  const { favorites, favoriteIds, toggle: toggleFavorite, canFavorite, isLoading: favoritesLoading, error: favoritesError, refetch: refetchFavorites } = useFavorites();
 
   const [query, setQuery] = useState('');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(initialFilter);
@@ -75,15 +72,20 @@ export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilt
   const search = useNearbyRestaurants({
     openNow: quickFilter === 'Aberto agora' || filters.openNow,
     sort: effectiveSort === 'Menor espera' ? 'wait' : 'distance',
+    // Ficha 60: categorias filtradas no servidor (várias ao mesmo tempo).
+    categories: [...filters.categories].sort(),
   });
+  const categoryList = useFoodCategories();
   const establishments = useMemo(() => search.data ?? [], [search.data]);
-  const allCategories = useMemo(() => [...new Set(establishments.flatMap(e => e.foodCategories))].sort(), [establishments]);
+  const allCategories = categoryList.data ?? [];
 
   const results = useMemo(() => {
-    const filtered = establishments.filter(r => matchesFilters(r, query, quickFilter, filters, favoriteIds));
+    // Aba Favoritos: lista da conta no servidor (inclui locais fora do raio da busca).
+    const source = quickFilter === 'Favoritos' ? favorites : establishments;
+    const filtered = source.filter(r => matchesFilters(r, query, quickFilter, filters));
     const sorter = SORTERS[effectiveSort];
     return sorter ? [...filtered].sort(sorter) : filtered;
-  }, [establishments, query, quickFilter, filters, favoriteIds, effectiveSort]);
+  }, [establishments, favorites, query, quickFilter, filters, effectiveSort]);
 
   const activeFiltersCount = [filters.openNow, filters.accepting, filters.distance !== 'any', filters.wait !== 'any', filters.categories.size > 0].filter(Boolean).length;
   const isFavoritesTab = quickFilter === 'Favoritos';
@@ -274,9 +276,13 @@ export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilt
         )}
       </div>
 
-      {search.error ? (
+      {isFavoritesTab && canFavorite && favoritesError ? (
+        <ErrorBlock error={favoritesError} onRetry={() => void refetchFavorites()} />
+      ) : isFavoritesTab && canFavorite && favoritesLoading ? (
+        <LoadingBlock />
+      ) : !isFavoritesTab && search.error ? (
         <ErrorBlock error={search.error} onRetry={() => void search.refetch()} />
-      ) : !search.data ? (
+      ) : !isFavoritesTab && !search.data ? (
         <LoadingBlock />
       ) : viewMode === 'list' ? (
         <div className="flex-1 px-4 py-4 flex flex-col gap-3 pb-24">
@@ -291,7 +297,7 @@ export default function ExploreScreen({ initialFilter = 'Todos' }: { initialFilt
                 <EmptyNearbyState onLocationChange={() => go('location')} onQR={() => go('qr-scanner')} />
               ) : (
                 results.map(r => (
-                  <RestaurantCard key={r.id} restaurant={r} onPress={() => openEstablishment(r.id)} isFavorite={favoriteIds.has(r.id)} onToggleFavorite={() => toggleFavorite(r.id)} />
+                  <RestaurantCard key={r.id} restaurant={r} onPress={() => openEstablishment(r.id)} isFavorite={favoriteIds.has(r.id)} onToggleFavorite={() => toggleFavorite(r.id, r)} />
                 ))
               )}
             </>
@@ -397,6 +403,7 @@ function MapView({ center, restaurants, selectedPin, onPinSelect, onOpenRestaura
             <button
               key={r.id}
               onClick={() => onPinSelect(isSelected ? null : r)}
+              aria-label={r.name}
               className="absolute transition-transform"
               style={{ left: `${position.x}%`, top: `${position.y}%`, transform: 'translate(-50%,-100%)' }}
             >
@@ -405,7 +412,7 @@ function MapView({ center, restaurants, selectedPin, onPinSelect, onOpenRestaura
                 isSelected ? 'bg-primary text-white scale-110' : closed ? 'bg-card text-muted-foreground' : 'bg-card text-foreground',
               )}>
                 <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', closed || r.orderingStatus === 'paused' ? 'bg-error' : r.highDemand ? 'bg-warning' : 'bg-success')} />
-                {r.name.split(' ').slice(0, 2).join(' ')}
+                <span className="max-w-[110px] truncate">{r.name}</span>
               </div>
               <div className={cn('w-2 h-2 rotate-45 mx-auto -mt-1', isSelected ? 'bg-primary' : 'bg-card')} />
             </button>

@@ -1,13 +1,10 @@
-import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { REALTIME_EVENTS, type AvailabilityChangeDto, type ManagedMenuItem, type MenuCategoryDto, type Page } from '@filafacil/shared';
+import { REALTIME_EVENTS, type AvailabilityChangeDto, type ManagedMenuItem, type MenuCategoryDto, type MenuRankingDto, type Page } from '@filafacil/shared';
 import { api } from '@/lib/api/client';
 import { queryClient } from '@/lib/api/queryClient';
 import { useRealtime } from '@/lib/realtime';
-import { createPersistentStore, useStore } from '@/lib/store';
 import { restaurantKeys } from './restaurantService';
 import { staffKeys } from './staffKeys';
-import { useItemOrderCounts } from './orderService';
 
 /** Item como os painéis exibem (preço em reais só para exibição; a API trabalha em centavos). */
 export interface MenuItemView {
@@ -20,6 +17,8 @@ export interface MenuItemView {
   priceCents: number;
   image: string | null;
   available: boolean;
+  /** Ficha 46: destaque manual do gestor. */
+  highlighted: boolean;
 }
 
 const toView = (item: ManagedMenuItem): MenuItemView => ({
@@ -32,6 +31,7 @@ const toView = (item: ManagedMenuItem): MenuItemView => ({
   priceCents: item.priceCents,
   image: item.imageUrl,
   available: item.available,
+  highlighted: item.highlighted,
 });
 
 /** Ordem padrão das categorias conhecidas quando a casa ainda não definiu outra. */
@@ -127,24 +127,33 @@ export function useAvailabilityLog(establishmentId: string, pageSize = 50) {
   });
 }
 
-// ─── Selo "+ pedido" (ficha 46, Sprint 2 — ainda local) ─────────────────────
+// ─── Selo "+ pedido" (ficha 46) ─────────────────────────────────────────────
 
-/** Quantos itens recebem o selo pelo ranking de vendas. */
-const POPULAR_RANKING_SIZE = 3;
-const featuredStore = createPersistentStore<string[]>('featured-items', []);
+export type MenuRanking = MenuRankingDto;
 
-export const useFeaturedIds = () => new Set(useStore(featuredStore));
+const rankingPath = (establishmentId: string) => `/establishments/${establishmentId}/menu/ranking`;
 
-export function toggleFeatured(itemId: string) {
-  featuredStore.set(prev => (prev.includes(itemId) ? prev.filter(id => id !== itemId) : [...prev, itemId]));
+/** Ranking de vendas dos últimos 30 dias (recalculado toda semana pelo servidor) com os destaques manuais. */
+export function useMenuRanking(establishmentId: string) {
+  return useQuery({
+    queryKey: staffKeys.ranking(establishmentId),
+    queryFn: ({ signal }) => api.get<MenuRanking>(rankingPath(establishmentId), undefined, signal),
+  });
 }
 
-/** Destaque manual do gestor ou top 3 em pedidos dos últimos 30 dias (pedidos ainda simulados). */
-export function useHighlightedIds() {
-  const featured = useStore(featuredStore);
-  const counts = useItemOrderCounts();
-  return useMemo(() => {
-    const popular = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, POPULAR_RANKING_SIZE).map(([id]) => id);
-    return new Set([...featured, ...popular]);
-  }, [featured, counts]);
+/** Destaque manual do gestor: o selo aparece no cardápio do cliente na hora (menu.updated). */
+export async function setItemHighlight(establishmentId: string, itemId: string, highlighted: boolean) {
+  try {
+    await api.put(`/establishments/${establishmentId}/menu/items/${itemId}/highlight`, { highlighted });
+  } finally {
+    void queryClient.invalidateQueries({ queryKey: staffKeys.ranking(establishmentId) });
+    refreshMenu(establishmentId);
+  }
+}
+
+export async function recalculateRanking(establishmentId: string) {
+  const ranking = await api.post<MenuRanking>(`${rankingPath(establishmentId)}/recalculate`);
+  queryClient.setQueryData(staffKeys.ranking(establishmentId), ranking);
+  void queryClient.invalidateQueries({ queryKey: restaurantKeys.menu(establishmentId) });
+  return ranking;
 }

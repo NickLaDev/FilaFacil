@@ -9,6 +9,7 @@ import { AppConfig } from '../../src/config/app-config.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { OAUTH_PROVIDERS, type OAuthProviderClient, type OAuthProviderId } from '../../src/modules/auth/oauth/oauth-provider.js';
 import { EmailSender, SmsSender } from '../../src/modules/notifications/message-senders.js';
+import { PaymentGateway } from '../../src/modules/payments/payment-gateway.js';
 import { setupApp } from '../../src/setup-app.js';
 
 /** Header anti-CSRF exigido em POST/PUT/PATCH/DELETE. */
@@ -37,22 +38,28 @@ export interface TestApp {
   app: INestApplication;
   prisma: PrismaService;
   sms: CapturingSender;
+  email: CapturingSender;
   port: number;
   /** Cliente HTTP com cookie jar próprio (cada um é um "navegador"). */
   browser: () => Agent;
   close: () => Promise<void>;
 }
 
-export async function createTestApp(oauthProviders = new Map<OAuthProviderId, OAuthProviderClient>()): Promise<TestApp> {
+export async function createTestApp(
+  oauthProviders = new Map<OAuthProviderId, OAuthProviderClient>(),
+  gateway?: PaymentGateway,
+): Promise<TestApp> {
   const sms = new CapturingSender();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  const email = new CapturingSender();
+  const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(SmsSender)
     .useValue(sms)
     .overrideProvider(EmailSender)
-    .useValue(new CapturingSender())
+    .useValue(email)
     .overrideProvider(OAUTH_PROVIDERS)
-    .useValue(oauthProviders)
-    .compile();
+    .useValue(oauthProviders);
+  // Gateway de pagamento de teste (dublê): a API real do Mercado Pago nunca é chamada nos testes.
+  const moduleRef = await (gateway ? builder.overrideProvider(PaymentGateway).useValue(gateway) : builder).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false, logger: process.env.TEST_LOGS === 'true' ? ['error', 'warn'] : false });
   setupApp(app, app.get(AppConfig));
   // Escutando numa porta real: supertest reutiliza o servidor e o Socket.IO fica acessível.
@@ -62,6 +69,7 @@ export async function createTestApp(oauthProviders = new Map<OAuthProviderId, OA
     port: (app.getHttpServer().address() as AddressInfo).port,
     prisma: app.get(PrismaService),
     sms,
+    email,
     browser: () => request.agent(app.getHttpServer()),
     close: () => app.close(),
   };

@@ -3,14 +3,14 @@ import { BookOpen, Edit3, ImageOff, Plus, Search, Star, Trash2, X } from 'lucide
 import EmptyState from '@/components/ui/EmptyState';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { useAsyncAction } from '@/lib/useAsyncAction';
-import { cn, formatCurrency } from '@/lib/utils';
+import { cn, formatCurrency, formatDateTime } from '@/lib/utils';
 import {
   deleteMenuItem,
   getCategories,
   setItemAvailability,
-  toggleFeatured,
-  useFeaturedIds,
-  useHighlightedIds,
+  recalculateRanking,
+  setItemHighlight,
+  useMenuRanking,
   useMenuItems,
   type MenuItemView,
 } from '@/services/menuService';
@@ -19,13 +19,17 @@ import type { ManagerSectionProps } from '../../types';
 import MenuItemFormModal from './MenuItemFormModal';
 
 const ALL_CATEGORIES = 'all';
+const TOP_RANK_SIZE = 3;
 
 /** Fichas 28, 03 e 46: cadastro do cardápio que o cliente vê, com destaque manual "+ pedido". */
 export default function MenuSection({ unit, notify }: ManagerSectionProps) {
   const query = useMenuItems(unit.id);
   const items = query.data ?? [];
-  const featuredIds = useFeaturedIds();
-  const highlightedIds = useHighlightedIds();
+  const ranking = useMenuRanking(unit.id);
+  const rankingById = new Map((ranking.data?.items ?? []).map(entry => [entry.menuItemId, entry]));
+  const featuredIds = new Set(items.filter(item => item.highlighted).map(item => item.id));
+  // Selo exibido ao cliente: destaque manual ou entre os mais vendidos (o servidor só lista quem vendeu).
+  const badgeIds = new Set([...featuredIds, ...[...rankingById.values()].filter(entry => entry.quantity > 0 && entry.rank <= TOP_RANK_SIZE).map(entry => entry.menuItemId)]);
   const { run } = useAsyncAction(notify);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState(ALL_CATEGORIES);
@@ -48,10 +52,19 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
         <p className="text-sm text-muted-foreground">
           {items.length} {items.length === 1 ? 'item' : 'itens'} no cardápio · alterações aparecem na hora para o cliente
         </p>
-        <button onClick={() => setEditing('new')} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-medium">
-          <Plus size={15} />
-          Novo item
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void run(() => recalculateRanking(unit.id), 'Ranking de vendas recalculado')}
+            title={ranking.data?.calculatedAt ? `Último cálculo: ${formatDateTime(ranking.data.calculatedAt)}` : undefined}
+            className="border border-border text-foreground px-4 py-2 rounded-xl text-sm font-medium hover:bg-muted"
+          >
+            Recalcular ranking
+          </button>
+          <button onClick={() => setEditing('new')} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-medium">
+            <Plus size={15} />
+            Novo item
+          </button>
+        </div>
       </div>
 
       {items.length > 0 && (
@@ -132,7 +145,7 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
                       )}
                       <div className="min-w-0">
                         <p className="font-medium text-foreground text-sm">{item.name}</p>
-                        {highlightedIds.has(item.id) && (
+                        {badgeIds.has(item.id) && (
                           <span className="text-[10px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-md">+ pedido</span>
                         )}
                       </div>
@@ -157,7 +170,7 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
                       <button
-                        onClick={() => toggleFeatured(item.id)}
+                        onClick={() => void run(() => setItemHighlight(unit.id, item.id, !featuredIds.has(item.id)), featuredIds.has(item.id) ? 'Destaque removido' : `${item.name} destacado como "+ pedido"`)}
                         title={featuredIds.has(item.id) ? 'Remover destaque' : 'Destacar como "+ pedido"'}
                         aria-pressed={featuredIds.has(item.id)}
                         aria-label={`Destacar ${item.name}`}

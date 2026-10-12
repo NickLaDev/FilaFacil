@@ -1,16 +1,13 @@
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { REALTIME_EVENTS, type FloorPlanDto } from '@filafacil/shared';
-import { api } from '@/lib/api/client';
+import { REALTIME_EVENTS, type FloorPlanDto, type QrResolveDto } from '@filafacil/shared';
+import { api, isApiError } from '@/lib/api/client';
 import { queryClient } from '@/lib/api/queryClient';
-import { useRealtime } from '@/lib/realtime';
-import { createPersistentStore, useStore } from '@/lib/store';
+import { isRealtimeHealthy, useRealtime } from '@/lib/realtime';
 import { createId } from '@/lib/utils';
-import { QR_DIRECTORY, SEED_TABLE_OVERLAYS } from '@/data/qrDirectory';
-import type { FloorLayout, FloorTable, TableLiveState, TableMerge } from '@/types/floor';
+import type { DuplicateTarget, FloorLayout, FloorTable, TableCheckDto, TableMapDto } from '@/types/floor';
 import { staffKeys } from './staffKeys';
 
-const FREE_TABLE: TableLiveState = { status: 'free', people: 0 };
 /** Mesas novas ganham id definitivo e QR Code no servidor ao salvar a planta. */
 const DRAFT_ID_PREFIX = 'draft-';
 
@@ -32,56 +29,46 @@ export function useFloorPlan(establishmentId: string) {
   return useQuery({ queryKey: staffKeys.floor(establishmentId), queryFn: ({ signal }) => fetchPlan(establishmentId, signal) });
 }
 
-/** Layout no formato das telas (mesas + mesclagens locais da Sprint 2). */
+/** Layout no formato das telas (mesas da planta salva). */
 export function useFloorLayout(establishmentId: string) {
   const plan = useFloorPlan(establishmentId);
-  const merges = useStore(mergesStore)[establishmentId];
-  const layout = useMemo(() => (plan.data ? toLayout(plan.data, merges ?? []) : null), [plan.data, merges]);
+  const layout = useMemo(() => (plan.data ? toLayout(plan.data) : null), [plan.data]);
   return { ...plan, layout };
 }
 
-function toLayout(plan: FloorPlanDto, merges: TableMerge[]): FloorLayout {
-  const tables = plan.tables.map(toTable);
-  const ids = new Set(tables.map(table => table.id));
-  return {
-    version: plan.version,
-    tables,
-    merges: merges.filter(merge => merge.tableIds.every(id => ids.has(id))),
-    updatedAt: plan.updatedAt,
-  };
+function toLayout(plan: FloorPlanDto): FloorLayout {
+  return { version: plan.version, tables: plan.tables.map(toTable), updatedAt: plan.updatedAt };
 }
 
 /** Versão mais recente do servidor (descarta o rascunho e recarrega). */
 export async function fetchFloorLayout(establishmentId: string) {
-  const plan = await queryClient.fetchQuery({ queryKey: staffKeys.floor(establishmentId), queryFn: () => fetchPlan(establishmentId), staleTime: 0 });
-  return toLayout(plan, mergesStore.get()[establishmentId] ?? []);
+  return toLayout(await queryClient.fetchQuery({ queryKey: staffKeys.floor(establishmentId), queryFn: () => fetchPlan(establishmentId), staleTime: 0 }));
 }
 
 /** Salva posição, formato e capacidade no servidor; a versão impede sobrescrever edição de outra pessoa. */
-export async function saveFloorLayout(establishmentId: string, layout: Pick<FloorLayout, 'version' | 'tables' | 'merges'>) {
+export async function saveFloorLayout(establishmentId: string, layout: Pick<FloorLayout, 'version' | 'tables'>) {
   const plan = await api.put<FloorPlanDto>(`/establishments/${establishmentId}/floor-plan`, {
     version: layout.version,
     tables: layout.tables.map(({ id, label, shape, capacity, x, y }) => ({ ...(isDraftTable({ id }) ? {} : { id }), label, shape, capacity, x, y })),
   });
-  const saved = new Set(plan.tables.map(table => table.id));
-  // Mesclagens com mesas que acabaram de ser criadas são refeitas depois de salvar (os ids mudam).
-  mergesStore.set(prev => ({ ...prev, [establishmentId]: layout.merges.filter(merge => merge.tableIds.every(id => saved.has(id))) }));
   queryClient.setQueryData(staffKeys.floor(establishmentId), plan);
-  return toLayout(plan, mergesStore.get()[establishmentId] ?? []);
+  void queryClient.invalidateQueries({ queryKey: staffKeys.tableMap(establishmentId) });
+  return toLayout(plan);
 }
 
-/**
- * Ficha 61 (Sprint 2): copia mesas (posição, formato e capacidade) para outra unidade usando a
- * mesma gravação de planta da Sprint 1 — o servidor gera novos ids e QR Codes.
- */
-export async function duplicateFloorLayout(sourceEstablishmentId: string, targetEstablishmentId: string) {
-  const [source, target] = await Promise.all([fetchPlan(sourceEstablishmentId), fetchPlan(targetEstablishmentId)]);
-  const plan = await api.put<FloorPlanDto>(`/establishments/${targetEstablishmentId}/floor-plan`, {
-    version: target.version,
-    tables: source.tables.map(({ label, shape, capacity, x, y }) => ({ label, shape, capacity, x, y })),
+/** Ficha 61: unidades da organização para onde a planta pode ser copiada (plano e permissão checados no servidor). */
+export function useDuplicateTargets(sourceEstablishmentId: string) {
+  return useQuery({
+    queryKey: [...staffKeys.floor(sourceEstablishmentId), 'duplicate-targets'],
+    queryFn: ({ signal }) => api.get<DuplicateTarget[]>(`/establishments/${sourceEstablishmentId}/floor-plan/duplicate-targets`, undefined, signal),
   });
-  mergesStore.set(prev => ({ ...prev, [targetEstablishmentId]: [] }));
+}
+
+/** Copia mesas, posições e capacidades de `source` para `target`; a origem não muda e o destino segue editável. */
+export async function duplicateFloorLayout(sourceEstablishmentId: string, targetEstablishmentId: string, replace: boolean) {
+  const plan = await api.post<FloorPlanDto>(`/establishments/${sourceEstablishmentId}/floor-plan/duplicate`, { targetEstablishmentId, replace });
   queryClient.setQueryData(staffKeys.floor(targetEstablishmentId), plan);
+  void queryClient.invalidateQueries({ queryKey: staffKeys.tableMap(targetEstablishmentId) });
 }
 
 /** Nova mesa no rascunho do editor, posicionada no centro da planta. */
@@ -91,76 +78,92 @@ export function createFloorTable(existing: FloorTable[]): FloorTable {
   return { id: createId(DRAFT_ID_PREFIX.slice(0, -1)), label: `Mesa ${nextNumber}`, shape: 'square', capacity: 4, x: 50, y: 50, qrCode: '' };
 }
 
-// ─── Mesclagem de mesas (ficha 47, Sprint 2 — no navegador) ─────────────────
+// ─── Mapa de mesas ao vivo e mesclagem (fichas 16 e 47 — servidor) ──────────
 
-const mergesStore = createPersistentStore<Record<string, TableMerge[]>>('table-merges', {});
-
-export function mergeTables<T extends Pick<FloorLayout, 'tables' | 'merges'>>(layout: T, tableIds: string[]): T {
-  const merges = layout.merges.filter(m => !m.tableIds.some(id => tableIds.includes(id)));
-  return { ...layout, merges: [...merges, { id: createId('merge'), tableIds }] };
-}
-
-export function unmergeTables<T extends Pick<FloorLayout, 'tables' | 'merges'>>(layout: T, mergeId: string): T {
-  return { ...layout, merges: layout.merges.filter(m => m.id !== mergeId) };
-}
-
-export const findMergeForTable = (merges: TableMerge[], tableId: string) => merges.find(m => m.tableIds.includes(tableId)) ?? null;
-
-export function mergeSummary(merge: TableMerge, tables: FloorTable[]) {
-  const members = tables.filter(t => merge.tableIds.includes(t.id));
-  return {
-    members,
-    label: `Mesas ${members.map(t => t.label.replace(/\D/g, '') || t.label).join(' + ')}`,
-    capacity: members.reduce((sum, t) => sum + t.capacity, 0),
-  };
-}
-
-// ─── Situação das mesas ─────────────────────────────────────────────────────
-
-/**
- * Livre/ocupada vem do servidor (necessário para a fila de espera da ficha 21). Reservada e
- * chamado — e a ocupação gerada pelos pedidos simulados — são da Sprint 2 e ficam no navegador.
- */
-const overlayStore = createPersistentStore<Record<string, TableLiveState>>('table-overlays', SEED_TABLE_OVERLAYS);
-
-export function useTableLiveStates(establishmentId: string): Record<string, TableLiveState> {
-  const { data } = useFloorPlan(establishmentId);
-  const overlays = useStore(overlayStore);
-  return useMemo(() => {
-    const states: Record<string, TableLiveState> = {};
-    for (const table of data?.tables ?? []) {
-      const server: TableLiveState =
-        table.occupancy.status === 'occupied'
-          ? { status: 'occupied', people: table.occupancy.partySize, since: table.occupancy.since ?? undefined }
-          : FREE_TABLE;
-      const overlay = overlays[table.id];
-      states[table.id] = overlay && (overlay.status !== 'occupied' || server.status === 'free') ? overlay : server;
-    }
-    return states;
-  }, [data, overlays]);
-}
-
-export const getTableLiveState = (states: Record<string, TableLiveState>, tableId: string) => states[tableId] ?? FREE_TABLE;
-
-/** Pedido simulado vinculado à mesa marca a mesa como ocupada no mapa do atendente. */
-export function occupyTableLocally(tableId: string) {
-  overlayStore.set(prev => {
-    const current = prev[tableId];
-    if (current?.status === 'called') return prev;
-    return { ...prev, [tableId]: { status: 'occupied', people: Math.max(current?.people ?? 0, 1), since: new Date().toISOString() } };
+/** Estado de todas as mesas; qualquer mudança (pedido, chamado, pagamento, mesclagem) chega por WebSocket. */
+export function useTableMap(establishmentId: string) {
+  const client = useQueryClient();
+  useRealtime({ establishmentId }, [REALTIME_EVENTS.tablesUpdated, REALTIME_EVENTS.floorPlanUpdated, REALTIME_EVENTS.orderUpdated], () => {
+    void client.invalidateQueries({ queryKey: staffKeys.tableMap(establishmentId) });
+  });
+  return useQuery({
+    queryKey: staffKeys.tableMap(establishmentId),
+    queryFn: ({ signal }) => api.get<TableMapDto>(`/establishments/${establishmentId}/table-map`, undefined, signal),
+    // Rede de segurança caso o WebSocket esteja bloqueado (sem WebSocket autenticado consulta a cada 3 s: ficha 16).
+    refetchInterval: () => (isRealtimeHealthy() ? 15_000 : 3_000),
   });
 }
 
-/** Mesa liberada no servidor: os status locais da Sprint 2 também são limpos. */
-export function clearLocalTableStates(tableIds: string[]) {
-  overlayStore.set(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !tableIds.includes(id))));
+const tablePath = (establishmentId: string, tableId: string) => `/establishments/${establishmentId}/tables/${tableId}`;
+
+async function mapAction(establishmentId: string, request: Promise<TableMapDto>) {
+  const map = await request;
+  queryClient.setQueryData(staffKeys.tableMap(establishmentId), map);
+  return map;
 }
 
-// ─── QR Code da mesa (ficha 02, Sprint 2) ───────────────────────────────────
+export const occupyTable = (establishmentId: string, tableId: string, partySize: number) =>
+  mapAction(establishmentId, api.post<TableMapDto>(`${tablePath(establishmentId, tableId)}/occupy`, { partySize }));
 
-/** Aceita o código puro ou uma URL cujo último segmento é o código. */
-export function findTableByQrCode(rawCode: string) {
-  const code = rawCode.trim().split('/').filter(Boolean).at(-1)?.toUpperCase() ?? '';
-  const entry = QR_DIRECTORY[code];
-  return entry ? { establishmentId: entry.establishmentId, table: { id: entry.tableId, label: entry.tableLabel } } : null;
+export const releaseTable = (establishmentId: string, tableId: string) =>
+  mapAction(establishmentId, api.post<TableMapDto>(`${tablePath(establishmentId, tableId)}/release`));
+
+export const reserveTable = (establishmentId: string, tableId: string, input: { name: string; partySize: number; reservedAt?: string }) =>
+  mapAction(establishmentId, api.post<TableMapDto>(`${tablePath(establishmentId, tableId)}/reservations`, input));
+
+export const cancelReservation = (establishmentId: string, tableId: string, reservationId: string) =>
+  mapAction(establishmentId, api.delete<TableMapDto>(`${tablePath(establishmentId, tableId)}/reservations/${reservationId}`));
+
+export const resolveTableCall = (establishmentId: string, tableId: string) =>
+  mapAction(establishmentId, api.post<TableMapDto>(`${tablePath(establishmentId, tableId)}/calls/resolve`));
+
+/** Ficha 47: une duas ou mais mesas salvas em um grupo (capacidade somada, comanda única). */
+export const mergeTables = (establishmentId: string, tableIds: string[]) =>
+  mapAction(establishmentId, api.post<TableMapDto>(`/establishments/${establishmentId}/table-groups`, { tableIds }));
+
+export const unmergeTables = (establishmentId: string, groupId: string) =>
+  mapAction(establishmentId, api.delete<TableMapDto>(`/establishments/${establishmentId}/table-groups/${groupId}`));
+
+/** Comanda da mesa ou do grupo mesclado. */
+export function useTableCheck(establishmentId: string, tableId: string | null) {
+  return useQuery({
+    queryKey: [...staffKeys.tableMap(establishmentId), 'check', tableId],
+    enabled: Boolean(tableId),
+    queryFn: ({ signal }) => api.get<TableCheckDto>(`/establishments/${establishmentId}/table-checks/${tableId}`, undefined, signal),
+  });
+}
+
+// ─── QR Code da mesa (ficha 02) ─────────────────────────────────────────────
+
+/**
+ * Conteúdo impresso no QR Code: um link do próprio app com o código da mesa. A câmera nativa abre o
+ * app já na mesa; o leitor interno e o campo de digitação aceitam o link ou só o código.
+ */
+export const QR_LINK_PARAM = 'mesa';
+
+export const qrPayloadFor = (code: string) => `${window.location.origin}/?${QR_LINK_PARAM}=${encodeURIComponent(code)}`;
+
+/** Extrai o código de um link do app, de uma URL qualquer terminada no código ou do código puro. */
+export function parseQrPayload(raw: string) {
+  const text = raw.trim();
+  let candidate: string;
+  try {
+    const url = new URL(text);
+    candidate = url.searchParams.get(QR_LINK_PARAM) ?? url.pathname.split('/').filter(Boolean).at(-1) ?? '';
+  } catch {
+    candidate = text.split('/').filter(Boolean).at(-1) ?? '';
+  }
+  return candidate.trim().toUpperCase();
+}
+
+/** Pergunta ao servidor a qual mesa o código pertence; `null` = código desconhecido (ou casa indisponível). */
+export async function resolveQrCode(raw: string) {
+  const code = parseQrPayload(raw);
+  if (!/^[A-Z0-9-]{3,32}$/.test(code)) return null;
+  try {
+    return await api.get<QrResolveDto>(`/restaurants/qr/${encodeURIComponent(code)}`);
+  } catch (error) {
+    if (isApiError(error) && error.status === 404) return null;
+    throw error;
+  }
 }

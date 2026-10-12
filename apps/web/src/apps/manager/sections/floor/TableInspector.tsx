@@ -3,8 +3,8 @@ import { Combine, MousePointerClick, Split, Trash2, Users } from 'lucide-react';
 import FormField, { PANEL_INPUT_CLASS } from '@/components/ui/FormField';
 import { SHAPE_LABELS } from '@/components/floor/tableStyles';
 import { cn } from '@/lib/utils';
-import { findMergeForTable, mergeSummary } from '@/services/floorService';
-import type { FloorTable, TableMerge, TableShape } from '@/types/floor';
+import { isDraftTable } from '@/services/floorService';
+import type { FloorTable, TableMapGroup, TableShape } from '@/types/floor';
 import type { LayoutDraft } from './useFloorDraft';
 
 const MIN_CAPACITY = 1;
@@ -13,24 +13,29 @@ const MAX_CAPACITY = 20;
 interface Props {
   draft: LayoutDraft;
   selectedIds: string[];
-  selectedMerge: TableMerge | null;
+  groups: TableMapGroup[];
+  selectedMerge: TableMapGroup | null;
+  /** Mesclar/desfazer age no servidor na hora; exige a planta salva. */
+  busy: boolean;
+  dirty: boolean;
   onUpdateTable: (id: string, patch: Partial<FloorTable>) => void;
   onRemoveTable: (id: string) => void;
   onMerge: () => void;
   onUnmerge: (mergeId: string) => void;
 }
 
-export default function TableInspector({ draft, selectedIds, selectedMerge, onUpdateTable, onRemoveTable, onMerge, onUnmerge }: Props) {
+const findGroup = (groups: TableMapGroup[], tableId: string) => groups.find(group => group.tableIds.includes(tableId)) ?? null;
+
+export default function TableInspector({ draft, selectedIds, groups, selectedMerge, busy, dirty, onUpdateTable, onRemoveTable, onMerge, onUnmerge }: Props) {
   if (selectedMerge) {
-    const summary = mergeSummary(selectedMerge, draft.tables);
     return (
-      <Panel title={summary.label}>
+      <Panel title={selectedMerge.label}>
         <p className="text-sm text-muted-foreground flex items-center gap-1.5">
           <Users size={13} />
-          {summary.capacity} lugares no total
+          {selectedMerge.capacity} lugares no total
         </p>
         <p className="text-xs text-muted-foreground leading-relaxed">No mapa do atendente estas mesas aparecem como uma única mesa.</p>
-        <button onClick={() => onUnmerge(selectedMerge.id)} className="w-full flex items-center justify-center gap-2 border border-border rounded-xl py-2.5 text-sm font-medium hover:bg-muted">
+        <button disabled={busy} onClick={() => onUnmerge(selectedMerge.id)} className="w-full flex items-center justify-center gap-2 border border-border rounded-xl py-2.5 text-sm font-medium hover:bg-muted disabled:opacity-50">
           <Split size={14} />
           Desfazer mesclagem
         </button>
@@ -40,15 +45,17 @@ export default function TableInspector({ draft, selectedIds, selectedMerge, onUp
 
   if (selectedIds.length > 1) {
     const tables = draft.tables.filter(t => selectedIds.includes(t.id));
-    const alreadyMerged = tables.some(t => findMergeForTable(draft.merges, t.id));
+    const alreadyMerged = tables.some(t => findGroup(groups, t.id));
+    const unsaved = dirty || tables.some(isDraftTable);
     return (
       <Panel title={`${tables.length} mesas selecionadas`}>
         <p className="text-sm text-muted-foreground">{tables.map(t => t.label).join(', ')}</p>
         <p className="text-sm text-foreground">Capacidade somada: {tables.reduce((sum, t) => sum + t.capacity, 0)} lugares</p>
+        {unsaved && <p className="text-xs text-warning">Salve a planta antes de mesclar.</p>}
         {alreadyMerged && <p className="text-xs text-warning">Alguma mesa já está mesclada — desfaça a mesclagem anterior antes.</p>}
         <button
           onClick={onMerge}
-          disabled={alreadyMerged}
+          disabled={alreadyMerged || unsaved || busy}
           className="w-full flex items-center justify-center gap-2 bg-primary text-white rounded-xl py-2.5 text-sm font-semibold disabled:opacity-50"
         >
           <Combine size={14} />
@@ -71,7 +78,7 @@ export default function TableInspector({ draft, selectedIds, selectedMerge, onUp
     );
   }
 
-  const merge = findMergeForTable(draft.merges, table.id);
+  const merge = findGroup(groups, table.id);
   return (
     <Panel title={table.label}>
       <FormField label="Nome da mesa" htmlFor="table-label" error={table.label.trim() ? undefined : 'Informe um nome.'}>
@@ -113,8 +120,8 @@ export default function TableInspector({ draft, selectedIds, selectedMerge, onUp
       </div>
       {merge && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 flex flex-col gap-2">
-          <p className="text-xs text-foreground">Faz parte de {mergeSummary(merge, draft.tables).label}.</p>
-          <button onClick={() => onUnmerge(merge.id)} className="text-xs text-primary font-medium text-left">
+          <p className="text-xs text-foreground">Faz parte de {merge.label}.</p>
+          <button disabled={busy} onClick={() => onUnmerge(merge.id)} className="text-xs text-primary font-medium text-left disabled:opacity-50">
             Desfazer mesclagem
           </button>
         </div>

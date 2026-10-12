@@ -26,6 +26,7 @@ export function toAuthUser(user: UserWithAccess): AuthUser {
     status: user.status,
     emailVerified: user.emailVerifiedAt !== null,
     phoneVerified: user.phoneVerifiedAt !== null,
+    hasPassword: user.passwordHash !== null,
     permissions: user.permissions.map(p => p.permission).filter(isPermission),
     createdAt: user.createdAt.toISOString(),
   };

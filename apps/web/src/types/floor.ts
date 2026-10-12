@@ -14,17 +14,10 @@ export interface FloorTable {
   qrCode: string;
 }
 
-/** Mesas mescladas (ficha 47, Sprint 2 — ainda guardadas no navegador). */
-export interface TableMerge {
-  id: string;
-  tableIds: string[];
-}
-
 export interface FloorLayout {
   /** Versão salva no servidor (0 = planta ainda não desenhada). */
   version: number;
   tables: FloorTable[];
-  merges: TableMerge[];
   updatedAt: string | null;
 }
 
@@ -33,5 +26,15 @@ export type TableLiveStatus = 'free' | 'occupied' | 'reserved' | 'called';
 export interface TableLiveState {
   status: TableLiveStatus;
   people: number;
-  since?: string;
+  since: string | null;
+  pendingCall: { id: string; createdAt: string } | null;
+  reservation: { id: string; name: string; partySize: number; reservedAt: string } | null;
 }
+
+export type {
+  TableCheckDto,
+  TableMapDto,
+  TableMapGroupDto as TableMapGroup,
+  TableMapTableDto as TableMapTable,
+  LayoutDuplicationTargetDto as DuplicateTarget,
+} from '@filafacil/shared';

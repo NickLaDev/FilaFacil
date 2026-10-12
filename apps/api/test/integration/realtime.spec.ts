@@ -1,7 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import { REALTIME_EVENTS } from '@filafacil/shared';
 import { resetDatabase } from '../helpers/database.js';
-import { createWorld, PASSWORD, type World } from '../helpers/fixtures.js';
+import { createUser, createWorld, PASSWORD, type World } from '../helpers/fixtures.js';
 import { createTestApp, CSRF, type TestApp } from '../helpers/test-app.js';
 
 describe('Tempo real (WebSocket)', () => {
@@ -63,5 +63,69 @@ describe('Tempo real (WebSocket)', () => {
     await admin.post('/api/auth/login').set(CSRF).send({ email: world.admin.email, password: PASSWORD });
     await admin.patch(`/api/admin/users/${world.managerA.id}/status`).set(CSRF).send({ status: 'suspended' });
     await expect(revoked).resolves.toEqual({ reason: 'suspended' });
+  });
+
+  describe('acesso da equipe é revalidado (ficha 36)', () => {
+    const adminAgent = async () => {
+      const admin = t.browser();
+      await admin.post('/api/auth/login').set(CSRF).send({ email: world.admin.email, password: PASSWORD });
+      return admin;
+    };
+    const waitlistEvent = (socket: Socket) => {
+      const seen: unknown[] = [];
+      socket.on(REALTIME_EVENTS.waitlistUpdated, payload => seen.push(payload));
+      return seen;
+    };
+    const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    it('quem perdeu o vínculo sai da sala na hora e não consegue entrar de novo', async () => {
+      const { socket } = await connect(world.managerA.email);
+      const otherManager = await createUser(t.prisma, { name: 'Gestor A2', email: 'gestor.a2@test.dev', role: 'manager', establishmentIds: [world.estA.id] });
+      const other = await connect(otherManager.email);
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estA.id })).toEqual({ ok: true });
+      const seen = waitlistEvent(socket);
+
+      const admin = await adminAgent();
+      const update = await admin.patch(`/api/admin/users/${world.managerA.id}/access`).set(CSRF).send({ role: 'manager', permissions: ['waitlist.manage', 'tables.view'], establishmentIds: [world.estB.id] });
+      expect(update.status).toBe(200);
+      await pause(200);
+      const control = new Promise(resolve => {
+        void other.socket.emitWithAck('subscribe', { establishmentId: world.estA.id }).then(() => other.socket.once(REALTIME_EVENTS.waitlistUpdated, resolve));
+      });
+      await pause(100);
+      const added = await t.browser().post(`/api/establishments/${world.estA.id}/waitlist`).set(CSRF).set('Cookie', other.cookie).send({ name: 'Grupo X', phone: '19988887777', partySize: 2 });
+      expect(added.status).toBe(201);
+      await control; // quem continua vinculado recebe
+      await pause(200);
+      expect(seen).toEqual([]); // quem perdeu o vínculo não
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estA.id })).toEqual({ ok: false });
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estB.id })).toEqual({ ok: true });
+    });
+
+    it('quem teve todas as permissões removidas não assina nem mantém a sala', async () => {
+      const { socket } = await connect(world.attendantA.email);
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estA.id })).toEqual({ ok: true });
+      await t.prisma.userPermission.deleteMany({ where: { userId: world.attendantA.id } });
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estA.id })).toEqual({ ok: false });
+    });
+
+    it('usuário suspenso (ou com sessão revogada) não assina mesmo com a conexão antiga', async () => {
+      const { socket } = await connect(world.managerA.email);
+      await t.prisma.user.update({ where: { id: world.managerA.id }, data: { status: 'suspended' } });
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estA.id })).toEqual({ ok: false });
+      await t.prisma.user.update({ where: { id: world.managerA.id }, data: { status: 'active' } });
+      await t.prisma.session.updateMany({ where: { userId: world.managerA.id }, data: { revokedAt: new Date() } });
+      expect(await socket.emitWithAck('subscribe', { establishmentId: world.estA.id })).toEqual({ ok: false });
+    });
+
+    it('suspensão pelo admin derruba a conexão', async () => {
+      const { socket } = await connect(world.managerA.email);
+      await socket.emitWithAck('subscribe', { establishmentId: world.estA.id });
+      const closed = new Promise(resolve => socket.once('disconnect', resolve));
+      const admin = await adminAgent();
+      await admin.patch(`/api/admin/users/${world.managerA.id}/status`).set(CSRF).send({ status: 'suspended' });
+      await closed;
+      expect(socket.connected).toBe(false);
+    });
   });
 });

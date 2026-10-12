@@ -50,6 +50,7 @@ export interface EstablishmentInput {
   planId: string;
   status: EstablishmentStatus;
   averageWaitMinutes: number;
+  pickupPoint: string;
   foodCategories: string[];
   openingHours: { weekday: number; opensAt: string; closesAt: string }[];
 }

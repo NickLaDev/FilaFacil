@@ -24,6 +24,7 @@ export interface Restaurant extends RestaurantSummary {
 export interface RestaurantDetailView extends Restaurant {
   timezone: string;
   openingHours: RestaurantDetail['openingHours'];
+  reservationsOpen: boolean;
 }
 
 /** Item do cardápio público com preços em reais para exibição (o cálculo é do servidor). */
@@ -37,6 +38,8 @@ export interface PricedMenuItem {
   finalPrice: number;
   available: boolean;
   promotion: { id: string; name: string; discountPercent: number; endsAt: string } | null;
+  /** Ficha 46: mais vendido nos últimos 30 dias ou destaque manual do gestor (selo "+ pedido"). */
+  topSeller: boolean;
 }
 
 export interface RestaurantSearch {
@@ -44,6 +47,8 @@ export interface RestaurantSearch {
   lng: number;
   openNow?: boolean;
   sort?: 'distance' | 'wait' | 'name';
+  /** Ficha 60: várias categorias de comida (basta o local ter uma); filtro feito no servidor. */
+  categories?: string[];
 }
 
 const WAIT_RANGE_MINUTES = 5;
@@ -51,7 +56,7 @@ const WAIT_RANGE_MINUTES = 5;
 const SEARCH_RADIUS_KM = 30;
 const SEARCH_PAGE_SIZE = 100;
 
-function toRestaurant(summary: RestaurantSummary): Restaurant {
+export function toRestaurant(summary: RestaurantSummary): Restaurant {
   return {
     ...summary,
     typeLabel: ESTABLISHMENT_TYPE_LABELS[summary.type],
@@ -60,7 +65,7 @@ function toRestaurant(summary: RestaurantSummary): Restaurant {
   };
 }
 
-export const toPricedItem = (item: PublicMenuItem): PricedMenuItem => ({
+export const toPricedItem = (item: PublicMenuItem & { isTopOrdered?: boolean; isHighlighted?: boolean }): PricedMenuItem => ({
   id: item.id,
   name: item.name,
   description: item.description,
@@ -70,6 +75,7 @@ export const toPricedItem = (item: PublicMenuItem): PricedMenuItem => ({
   finalPrice: item.finalPriceCents / 100,
   available: true,
   promotion: item.promotion,
+  topSeller: Boolean(item.isTopOrdered || item.isHighlighted),
 });
 
 export const restaurantKeys = {
@@ -88,11 +94,20 @@ export function useRestaurants(search: RestaurantSearch | null) {
     queryFn: async ({ signal }) => {
       const page = await api.get<Page<RestaurantSummary>>(
         '/restaurants',
-        { lat: search?.lat, lng: search?.lng, openNow: search?.openNow, sort: search?.sort, radiusKm: SEARCH_RADIUS_KM, pageSize: SEARCH_PAGE_SIZE },
+        { lat: search?.lat, lng: search?.lng, openNow: search?.openNow, sort: search?.sort, categories: search?.categories?.length ? search.categories.join(',') : undefined, radiusKm: SEARCH_RADIUS_KM, pageSize: SEARCH_PAGE_SIZE },
         signal,
       );
       return page.items.map(toRestaurant);
     },
+  });
+}
+
+/** Ficha 60: categorias de comida cadastradas (independem do filtro aplicado). */
+export function useFoodCategories() {
+  return useQuery({
+    queryKey: ['restaurants', 'categories'],
+    staleTime: 5 * 60_000,
+    queryFn: async ({ signal }) => (await api.get<{ categories: string[] }>('/restaurants/categories', undefined, signal)).categories,
   });
 }
 
@@ -113,7 +128,7 @@ export function useRestaurant(id: string | null | undefined) {
 
 async function fetchDetail(id: string, signal?: AbortSignal): Promise<RestaurantDetailView> {
   const detail = await api.get<RestaurantDetail>(`/restaurants/${id}`, undefined, signal);
-  return { ...toRestaurant(detail), timezone: detail.timezone, openingHours: detail.openingHours };
+  return { ...toRestaurant(detail), timezone: detail.timezone, openingHours: detail.openingHours, reservationsOpen: detail.reservationsOpen };
 }
 
 /**
@@ -151,7 +166,10 @@ export async function fetchRestaurant(id: string) {
 }
 
 /** Estabelecimentos perto da localização escolhida pelo cliente (GPS ou região). */
-export function useNearbyRestaurants(options: Pick<RestaurantSearch, 'openNow' | 'sort'> = {}) {
+export function useNearbyRestaurants(options: Pick<RestaurantSearch, 'openNow' | 'sort' | 'categories'> = {}) {
   const { coords } = useClientLocation();
   return useRestaurants({ lat: coords.lat, lng: coords.lng, ...options });
 }
+
+/** Ficha 16: o cliente na mesa chama o atendente; o mapa do atendente destaca a mesa em tempo real. */
+export const callAttendant = (tableId: string) => api.post<{ id: string; tableId: string; createdAt: string }>('/table-calls', { tableId });

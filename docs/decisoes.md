@@ -30,7 +30,7 @@ Registro das escolhas que não estão óbvias no código e das ambiguidades das 
 ### Login por código (ficha 06)
 
 - O código é aleatório (CSPRNG) mesmo em desenvolvimento; o provider `dev` apenas escreve a mensagem no terminal da API e é recusado com `NODE_ENV=production`.
-- O código fixo `123456` existe só nos fluxos simulados da Sprint 2 (verificação de contato, recuperação de senha), que não falam com o servidor.
+- Verificação de contato, recuperação de senha e exclusão de conta usam códigos reais (CSPRNG, HMAC no banco), como o login por código.
 
 ### Limite de tentativas de senha
 
@@ -89,10 +89,105 @@ Registro das escolhas que não estão óbvias no código e das ambiguidades das 
 | Tema | Interpretação |
 |---|---|
 | Nota do restaurante (ficha 12) | `rating_average`/`rating_count` agregados no estabelecimento; avaliações individuais não fazem parte da Sprint 1 |
-| Reservas | Fora do escopo da Sprint 1; nenhuma ficha a pede |
+| Reservas | Reserva de mesa por mesa é da equipe (ficha 16); a "reservar" do cliente (ficha 12) é entrada na fila de espera — ver "Reserva do cliente" abaixo |
 | Tempo de espera exibido na busca (ficha 11) | `average_wait_minutes` configurado por estabelecimento; a fila calcula a sua própria estimativa |
 | Quem edita dados do estabelecimento | O admin (ficha 34); o gestor ainda não tem tela de dados da casa |
 | Localização manual (ficha 11) | Lista de regiões com coordenadas, pois não há geocodificação contratada; com permissão de localização, usa o GPS |
-| Biometria (ficha 59) | O aparelho pede a biometria, mas abrir sessão exige WebAuthn no servidor (Sprint 2); hoje só mostra um aviso |
-| QR Code da mesa (ficha 02) | Sprint 2; o diretório local resolve os códigos do seed para estabelecimentos reais da API |
-| Mesclagem de mesas (ficha 47) | Sprint 2; fica como sobreposição local no mapa |
+| Biometria (ficha 59) | WebAuthn real no servidor (ver Sprint 2, blocos 2 e 3) |
+| QR Code da mesa (ficha 02) | Resolvido pela API (`GET /restaurants/qr/:code`) |
+| Mesclagem de mesas (ficha 47) | Persistida no servidor (ver Sprint 2, blocos 2 e 3) |
+
+# Decisões técnicas — Sprint 2, bloco 1 (fichas 02, 04, 08, 09 e 65)
+
+## Pedido e preço
+- O servidor calcula o total (`POST /orders`): preço do item + melhor promoção vigente, com a mesma regra do cardápio (`common/pricing.ts`). O cliente envia `expectedTotalCents` só para detectar mudança de preço (409 `PRICE_CHANGED`).
+- Nome e preço do item são copiados para `order_items`; mudar o cardápio depois não altera pedidos antigos. A mesa é opcional; se a mesa sair da planta, o pedido guarda o nome em `table_label`.
+- **Sem duplicar pedido:** o app gera um `clientRequestId` por tentativa de checkout (índice único por usuário). Repetir o envio, ou tentar pagar de novo depois de uma recusa, reaproveita o mesmo pedido. Mudou o carrinho = outro pedido; o abandonado fica `received` sem pagamento e não aparece para a cozinha.
+
+## Pagamento (Mercado Pago)
+- O cartão nunca passa pelo servidor: o navegador troca os dados por um token direto com o Mercado Pago (SDK) e a API recebe só `cardToken` e `paymentMethodId`.
+- **Só o gateway aprova.** Criação, webhook, sincronização e estorno passam por `OrderPaymentsService.apply`, sob `pg_advisory_xact_lock` do pedido e idempotente. O webhook autêntica a assinatura (`x-signature`, HMAC) e mesmo assim reconsulta o pagamento na API do gateway; o valor aprovado precisa ser igual ao do pedido.
+- `POST /orders/:id/payments/sync` consulta o gateway (o app chama a cada poucos segundos enquanto o Pix está pendente), então o webhook é opcional em desenvolvimento local.
+- No máximo um pagamento `pending`/`approved` por pedido (índice parcial). A chave de idempotência enviada ao gateway é `order-<id>-<tentativa>`. Trocar Pix pendente por cartão cancela o Pix antes de cobrar.
+- Sem `PAYMENT_PROVIDER` o pagamento responde 503. Limitação conhecida: se a chamada ao gateway der timeout depois de cobrar, a transação local é desfeita; repetir o pedido reaproveita a mesma chave de idempotência.
+- Estorno: permissão própria (`orders.refund`, só gestor), apenas para pedidos pagos que ainda não ficaram prontos.
+
+## Verificação de contato (ficha 65)
+- Reaproveita `otp_challenges`, agora com `purpose` e `user_id`: o código de verificação só vale para a conta que o pediu, para o contato atual dela e para essa finalidade (não abre sessão, e código de login não verifica contato).
+- O destino nunca vem da requisição. O servidor recusa pagamento de conta sem e-mail ou celular verificado.
+- E-mail real por SMTP (Nodemailer). SMS não tem provider: `GET /auth/providers` informa os canais disponíveis e o app só oferece o que funciona.
+
+## Andamento do pedido (ficha 09)
+- Status: `received` (aguardando pagamento) → `paid` → `preparing` → `ready` → `delivered`, mais `cancelled` (estorno). A equipe só avança um passo por vez (`orders.manage`, atualização condicional); pedido não pago nunca entra na cozinha.
+- Evento `order.updated` para a sala `user:<id>` do dono e a sala da equipe. Sem WebSocket o app consulta a API a cada 4–5 s.
+- Estimativa = `averageWaitMinutes` da casa; retirada = `pickupPoint` (editável pelo admin); o código de retirada só aparece com o pedido pronto.
+
+## QR Code (ficha 02)
+- `GET /restaurants/qr/:code` (público, com limite) resolve qualquer mesa da planta, inclusive as criadas depois. O conteúdo impresso é um link do app (`/?mesa=CODIGO`): a câmera nativa abre o app na mesa e o leitor interno aceita o link ou o código.
+- Leitor: Shape Detection API quando existe e jsQR nos demais (Safari/iOS, Firefox). A câmera exige HTTPS fora de localhost.
+
+## Estabilização do bloco 1 (revisão técnica)
+
+### Pagamento: resultado incerto nunca vira cobrança duplicada
+- A tentativa (`payments`) é gravada **antes** de falar com o Mercado Pago e as chamadas HTTP ficam **fora** de transação. O id da tentativa é a referência externa (`external_reference`) e a chave de idempotência (`payment-<id>`), estáveis em qualquer repetição. O token do cartão é de uso único (7 dias) e só é usado na chamada original: nenhuma repetição o reaproveita.
+- Falha **antes** de cobrar (credencial/dados recusados, sem conexão) encerra a tentativa (`refused`) e libera outra. Timeout, conexão perdida ou 5xx são **incertos**: a tentativa fica `pending` sem `provider_payment_id`, o servidor procura a cobrança por `external_reference` (`GET /v1/payments/search`, documentado) e **nenhuma outra cobrança é aberta** enquanto ela estiver incerta.
+- A conciliação roda na criação, em `POST …/payments/sync` e no webhook (que acha a linha pela referência e liga o id do gateway). Pix incerto sem cobrança no gateway é encerrado: o código nunca chegou ao cliente, então ninguém pode pagá-lo. Cartão incerto só sai do estado incerto quando o gateway confirma a cobrança (o provedor sem resposta, ou busca ainda sem o registro, mantém o bloqueio).
+- Estorno: `refund_requested_at` é gravado antes de chamar o gateway; a chave `refund-<id>` é fixa; qualquer desfecho termina consultando o pagamento (inclusive "já estornado"). Estorno sem confirmação continua repetível, aparece como pendente para a equipe e é fechado por webhook, sincronização ou nova tentativa.
+
+### Pedido velho e estado da casa
+- O mesmo `clientRequestId` com outro carrinho/mesa/total é recusado (`ORDER_CONTENT_CHANGED`/`PRICE_CHANGED`). O pagamento recebe o total que o cliente viu (`ORDER_TOTAL_CHANGED`).
+- Antes de abrir uma **nova** cobrança o servidor reavalia o pedido: não expirou (30 min sem pagar), a casa aceita pedidos, itens disponíveis e preços iguais aos da criação. Pix pendente ainda válido, pedido pago e pedido com cobrança em andamento não passam por essa checagem: o que foi aceito antes de a casa fechar não é cancelado.
+
+### Limites de requisição
+- Com sessão válida o limite é por **usuário**; sem sessão, por IP. Os guards são CSRF → sessão → limite (a sessão precisa estar resolvida). Login e demais rotas sem sessão continuam por IP, com os mesmos limites. Pedido 30/min, pagamento 12/min, sincronização 60/min por usuário (o Pix consulta 15/min); webhook 600/min; leitura de QR 300/min por IP; padrão 600/min.
+
+### Tempo real
+- O servidor envia `realtime.ready {authenticated}` ao conectar. Conexão sem sessão não conta como tempo real: o app consulta a API a cada 4 s, tenta renovar a sessão (chamada autenticada) e reconecta, no máximo uma vez a cada 30 s.
+
+## Gateway de pagamento simulado (demonstração acadêmica)
+
+- **Por quê:** o projeto é acadêmico; exigir conta, credenciais, webhook público e transações reais atrapalha a demonstração. `SimulatedPaymentGateway` implementa o mesmo `PaymentGateway` do Mercado Pago, que continua disponível para uso futuro. **Não é integração com instituição financeira: nenhum dinheiro é movido e as transações não têm valor financeiro** (`PaymentDto.simulated`, faixa na tela e no comprovante).
+- **Opt-in duplo e proteção de produção:** `PAYMENT_PROVIDER=simulated` + `ALLOW_SIMULATED_PAYMENTS=true`. O schema do `.env` recusa a combinação em `NODE_ENV=production` (e a fábrica do módulo também), e o padrão do código continua `none`. A rota `POST /orders/:id/payments/demo-confirm` responde 404 com qualquer outro gateway.
+- **Cenários de cartão** (crédito e débito) pelo `cardToken`: `sim_approved`, `sim_refused`, `sim_error` (falha antes de cobrar → 502). Nenhum dado de cartão é digitado; qualquer outro token é recusado.
+- **Pix:** cobrança pendente com id `SIM-<referência>` e código `SIMULADO-NAO-PAGAVEL-…` (sem payload Pix real). O dono do pedido confirma pelo botão de demonstração; o simulador só marca a cobrança e quem muda pagamento/pedido continua sendo o `apply()` de sempre (lock, conferência de valor, evento Socket.IO).
+- **Sem segunda fonte de verdade:** o ledger em memória é um espelho. Id desconhecido (reinício) é reconstruído da linha `payments` já aplicada; uma aprovação marcada no ledger e não gravada no banco some no reinício. Estorno, idempotência por referência, conciliação e permissões são as do fluxo real (nenhuma migration).
+- **Limitação:** vale para uma instância da API. Trocar de provedor com pagamentos pendentes no banco exige limpá-los, pois cada provedor só conhece os próprios ids.
+
+
+# Decisões técnicas — Sprint 2, blocos 2 e 3 (fichas 16, 44, 45, 46, 47, 53, 59, 60, 61)
+
+Migrations novas: `20261011180000_sprint2_blocks_2_3` e `20261011190000_ranking_runs` (`pnpm db:migrate`). Dependência nova: `@simplewebauthn/server` (API) e `@simplewebauthn/browser` (web). Variável nova, opcional: `WEBAUTHN_RP_ID`.
+
+## Mapa de mesas (16) e mescla (47)
+- Estado da mesa por leitura: **chamado > ocupada > reservada > livre**. `occupancy` continua só `free/occupied` (a fila de espera depende dele); chamados (`table_calls`) e reservas (`table_reservations`) são tabelas próprias, com índice parcial: no máximo um chamado aberto e uma reserva ativa por mesa.
+- Pagamento aprovado de pedido com mesa ocupa a mesa (ou o grupo) se estava livre, na mesma transação do pagamento; o número de pessoas fica 0 (a tela mostra "—") até o atendente informar. Liberar usa `WaitlistService.releaseTables`, então a fila continua avisando o próximo grupo.
+- Tempo real: evento `tables.updated` para a equipe em qualquer mudança (chamado, ocupação, reserva, mescla, pedido/pagamento, planta). O app recarrega `GET /table-map`.
+- Ações de mapa usam a permissão existente `tables.view` (atendente e gestor); mesclar/desfazer exige `floor.manage` (gestor). Não foi criada permissão nova.
+- Mescla = `table_groups` + `dining_tables.group_id`: capacidade somada, estado agregado, ações valem para o grupo todo, desfazer apaga o grupo e cada mesa volta ao próprio estado. Excluir mesa da planta desfaz grupos com menos de duas mesas.
+- Conta consolidada (`GET table-checks/:tableId`): pedidos pagos das mesas do grupo desde a ocupação (ou criação do grupo). Reaproveita pedidos/pagamentos; não há sistema de cobrança novo.
+
+## Duplicar layout (61)
+- Substituir mesas do destino (`replace`) é recusado (`TARGET_IN_USE`) se há mesa ocupada, chamado, reserva, pedido em andamento ou mesa mesclada. Exige `floor.manage` e o recurso `layout_duplication` na origem e no destino, mesma organização e vínculo do usuário com o destino. Transação com lock das duas plantas; a origem só é lida. Destino com mesas exige `replace: true`. QR Codes do destino são novos.
+
+## Mais pedidos (46)
+- Top 3 por casa pela quantidade vendida em pedidos com pagamento aprovado nos últimos 30 dias (cancelado/estornado não conta), gravado em `menu_item_rankings`. Recálculo semanal por verificação horária no processo + `ranking_runs` + lock no banco (sem cron externo; desligado com `NODE_ENV=test`). Destaque manual do gestor em `menu_items.highlighted`; o cardápio público traz `isTopOrdered` e `isHighlighted`.
+
+## Conta (44, 45, 53, 59, 60)
+- **Recuperação de senha:** reaproveita `otp_challenges` (`purpose=password_reset`): código de 6 dígitos, HMAC, 10 min, uso único, 5 tentativas. Conta inexistente, suspensa ou em cooldown recebe a mesma resposta (sem enumeração). Redefinir encerra todas as sessões e marca o contato como verificado.
+- **Favoritos:** tabela `favorites` por conta; restaurante inativo some da lista, mas o favorito permanece.
+- **Exclusão LGPD:** reautenticação por senha ou código enviado a contato verificado; anonimização imediata (nome, contatos, CPF, senha, endereços, vínculos sociais, favoritos, credenciais); pedidos permanecem sem identificação; bloqueada com pedidos em andamento (`ACTIVE_ORDERS`); contas da equipe não se autoexcluem; e-mail de confirmação ao endereço antigo. Sessões são revogadas (e IP/agente zerados) e códigos de login do contato apagados na mesma transação.
+- **Biometria:** WebAuthn real (`@simplewebauthn/server`): credencial descobrível, verificação de usuário obrigatória, desafio de uso único com 5 min, conferência de origem (`WEB_ORIGIN`), RP ID e contador. Só a chave pública é guardada. Ativar = cadastrar credencial; desativar = removê-la. Login tradicional segue disponível.
+- **Categorias:** `GET /restaurants?categories=a,b` (basta atender a uma) e `GET /restaurants/categories`; o antigo `category` continua valendo.
+
+## Reserva do cliente (12), acesso em tempo real e estorno (decisões da fase final)
+- **Reservar (12):** a reserva do cliente é uma entrada real na fila de espera do restaurante (ficha 21), não uma reserva de mesa (ficha 16, que é por mesa e feita pela equipe). `POST/GET/DELETE /restaurants/:id/reservation`: exige login de cliente, restaurante ativo e aberto agora, recurso `waitlist` no plano, uma entrada ativa por cliente (lock da fila + índice parcial único em `waitlist_entries.customer_id`), celular da conta ou informado. A equipe vê a entrada na fila (selo "Reserva online") e o cliente acompanha posição/aviso (consulta a cada 15 s; sem sala de tempo real para clientes). Limitação conhecida: logout de uma única sessão não derruba o socket dela até reconectar (eventos só levam ids; a API é quem autoriza). Excluir a conta tira a entrada da fila e anonimiza nome/celular.
+- **Código de login para conta inexistente (`POST /auth/otp` → 404): mantido.** O cadastro (`POST /auth/register`) já revela se e-mail/celular existem (409), ambos limitados a 5/min por IP; resposta uniforme aqui só pioraria a mensagem de erro da ficha 06 sem fechar a enumeração. Login por senha continua uniforme (`INVALID_CREDENTIALS`). É um oráculo de enumeração conhecido e aceito (a redefinição de senha, sim, usa resposta uniforme).
+- **Tempo real da equipe:** cada `subscribe` a uma sala de equipe confere no banco sessão ativa, usuário não suspenso, papel de equipe, ao menos uma permissão e vínculo atual. Mudança de papel/permissões/vínculos pelo admin tira as conexões abertas das salas da equipe na hora; suspensão derruba a conexão. Estabelecimento suspenso não é checado no socket: os eventos só dizem "o que mudou" e a API já devolve 403.
+- **Estorno × avanço de etapa:** `advanceStatus` roda sob o mesmo lock `order:<id>` do estorno e recusa (409 `REFUND_IN_PROGRESS`) pedido com estorno pedido e não concluído; assim nunca fica entregue/pronto e estornado. Efeito colateral aceito: estorno incerto bloqueia o avanço até ser repetido/conciliado.
+- **Biometria em conta sem senha (59):** exige código enviado ao contato verificado (`POST /auth/webauthn/register/code`, finalidade `passkey_registration`, uso único) em `register/options`; contas com senha seguem confirmando a senha.
+- **Abertura por link de mesa (02):** com `?mesa=` a vinheta inicial dura 250 ms (aguardando a sessão); o início normal mantém 1,8 s. O tempo de 1,8 s era o que dominava link→cardápio, não a API.
+- **`THROTTLE_DISABLED`:** faz parte do schema do ambiente e é recusado com `NODE_ENV=production` (e ignorado pelo throttler em produção).
+- **Limitações conhecidas:** dos limites de plano só `maxTables` é aplicado (unidades e equipe não são verificados na criação); sem provider de SMS (`SMS_PROVIDER=none`) o aviso de "mesa pronta" da fila não é entregue — fica registrado como `skipped` e a equipe avisa presencialmente (vale também para o cliente que reservou pelo app: a posição/aviso aparece na tela dele); logout de uma única sessão não derruba o socket dela.
+
+## Não verificado
+- Entrega real de SMTP/SMS; WebAuthn em aparelho/navegador real (testes usam autenticador de software); recálculo semanal em tempo real (testado com relógio injetado).

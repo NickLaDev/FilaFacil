@@ -12,7 +12,7 @@ const ALL_FEATURES: PlanFeature[] = ['floor_plan', 'waitlist', 'promotions', 're
 
 let passwordHash: string | null = null;
 
-async function createUser(prisma: PrismaService, data: { name: string; email: string; role: UserRole; establishmentIds?: string[]; phone?: string }) {
+export async function createUser(prisma: PrismaService, data: { name: string; email: string; role: UserRole; establishmentIds?: string[]; phone?: string }) {
   passwordHash ??= await new PasswordHasher().hash(PASSWORD);
   return prisma.user.create({
     data: {

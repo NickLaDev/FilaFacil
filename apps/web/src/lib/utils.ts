@@ -6,6 +6,9 @@ export function formatCurrency(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+/** Valores da API vêm em centavos. */
+export const formatCents = (cents: number) => formatCurrency(cents / 100);
+
 export function formatTime(date: Date | number | string) {
   return new Date(date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }

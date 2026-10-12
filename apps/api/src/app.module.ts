@@ -11,16 +11,19 @@ import { AdminModule } from './modules/admin/admin.module.js';
 import { AccessTokenGuard } from './modules/auth/access-token.guard.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { EstablishmentsModule } from './modules/establishments/establishments.module.js';
+import { FavoritesModule } from './modules/favorites/favorites.module.js';
 import { FloorPlanModule } from './modules/floor-plan/floor-plan.module.js';
 import { HealthController } from './modules/health/health.controller.js';
 import { MeModule } from './modules/me/me.module.js';
 import { MenuModule } from './modules/menu/menu.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
+import { OrdersModule } from './modules/orders/orders.module.js';
 import { PromotionsModule } from './modules/promotions/promotions.module.js';
 import { RealtimeGatewayModule } from './modules/realtime/realtime-gateway.module.js';
 import { RealtimeModule } from './modules/realtime/realtime.module.js';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
+import { TablesModule } from './modules/tables/tables.module.js';
 import { TechnicalSheetsModule } from './modules/technical-sheets/technical-sheets.module.js';
 import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
 
@@ -32,29 +35,43 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     NotificationsModule,
     StorageModule,
     AccessModule,
-    // Limite geral por IP; rotas de autenticação têm limites próprios (@Throttle).
+    // Limite geral: por usuário quando há sessão válida e por IP nas demais requisições. Clientes no Wi-Fi
+    // de um mesmo bar compartilham o IP público, então o IP sozinho bloquearia quem está logado. Rotas de
+    // autenticação têm limites próprios (@Throttle) e, sem sessão, continuam contadas por IP.
     ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60_000, limit: 300 }],
-      skipIf: () => process.env.THROTTLE_DISABLED === 'true',
+      throttlers: [
+        {
+          name: 'default',
+          ttl: 60_000,
+          limit: 600,
+          getTracker: (request: { auth?: { userId: string }; ip?: string }) => (request.auth ? `user:${request.auth.userId}` : (request.ip ?? 'unknown')),
+        },
+      ],
+      // Interruptor só para testes/desenvolvimento: ignorado em produção.
+      skipIf: () => process.env.THROTTLE_DISABLED === 'true' && process.env.NODE_ENV !== 'production',
     }),
     AuthModule,
     MeModule,
     RealtimeGatewayModule,
     RestaurantsModule,
+    FavoritesModule,
     EstablishmentsModule,
     MenuModule,
     PromotionsModule,
     TechnicalSheetsModule,
     FloorPlanModule,
     WaitlistModule,
+    TablesModule,
+    OrdersModule,
     AdminModule,
   ],
   controllers: [HealthController],
   providers: [
-    // Ordem importa: CSRF → rate limit → sessão.
+    // Ordem importa: CSRF → sessão → rate limit (o limite por usuário precisa da sessão já resolvida;
+    // requisições sem cookie válido seguem para o limite por IP sem consulta ao banco).
     { provide: APP_GUARD, useClass: CsrfGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: AccessTokenGuard },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_PIPE, useFactory: createValidationPipe },
   ],
