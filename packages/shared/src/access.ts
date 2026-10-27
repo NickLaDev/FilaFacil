@@ -32,6 +32,12 @@ export const PERMISSIONS = [
   { key: 'waitlist.manage', label: 'Gerenciar fila de espera', scope: 'establishment' },
   { key: 'orders.manage', label: 'Acompanhar e atualizar pedidos', scope: 'establishment' },
   { key: 'orders.refund', label: 'Estornar pagamentos de pedidos', scope: 'establishment' },
+  { key: 'orders.estimate', label: 'Ajustar o tempo estimado dos pedidos', scope: 'establishment' },
+  { key: 'kitchen.manage', label: 'Gerenciar estações da cozinha e impressoras', scope: 'establishment' },
+  { key: 'shift.manage', label: 'Abrir e fechar o turno', scope: 'establishment' },
+  { key: 'tabs.manage', label: 'Gerenciar comandas', scope: 'establishment' },
+  { key: 'stock.manage', label: 'Gerenciar estoque de insumos', scope: 'establishment' },
+  { key: 'dashboard.view', label: 'Ver o dashboard de gestão', scope: 'establishment' },
   { key: 'platform.establishments', label: 'Gerenciar estabelecimentos', scope: 'platform' },
   { key: 'platform.users', label: 'Gerenciar usuários', scope: 'platform' },
   { key: 'platform.plans', label: 'Gerenciar planos', scope: 'platform' },
@@ -46,8 +52,8 @@ export const permissionLabel = (key: string) => PERMISSIONS.find(p => p.key === 
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
   client: ['orders.place'],
-  attendant: ['tables.view', 'menu.availability', 'orders.manage'],
-  manager: ['tables.view', 'menu.availability', 'menu.edit', 'promotions.manage', 'recipes.manage', 'floor.manage', 'waitlist.manage', 'orders.manage', 'orders.refund'],
+  attendant: ['tables.view', 'menu.availability', 'orders.manage', 'tabs.manage'],
+  manager: ['tables.view', 'menu.availability', 'menu.edit', 'promotions.manage', 'recipes.manage', 'floor.manage', 'waitlist.manage', 'orders.manage', 'orders.refund', 'orders.estimate', 'kitchen.manage', 'shift.manage', 'tabs.manage', 'stock.manage', 'dashboard.view'],
   admin: ['platform.establishments', 'platform.users', 'platform.plans'],
 };
 

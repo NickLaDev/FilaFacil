@@ -123,7 +123,7 @@ export function useRealtime(request: RealtimeSubscribeRequest | null, events: Re
  * ao conectar, então não há assinatura: basta escutar. `onChange` também roda quando a conexão volta,
  * para recuperar o que passou durante a queda.
  */
-export function useUserRealtime(events: RealtimeEvent[], onChange: () => void, enabled = true) {
+export function useUserRealtime(events: RealtimeEvent[], onChange: (payload?: RealtimePayload) => void, enabled = true) {
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -133,13 +133,14 @@ export function useUserRealtime(events: RealtimeEvent[], onChange: () => void, e
   useEffect(() => {
     if (!enabled) return;
     const client = getSocket();
-    const handler = () => onChangeRef.current();
+    const handler = (payload?: RealtimePayload) => onChangeRef.current(payload);
+    const onReconnect = () => onChangeRef.current();
     const names = eventsKey.split(',') as RealtimeEvent[];
     names.forEach(name => client.on(name, handler));
-    reconnectListeners.add(handler);
+    reconnectListeners.add(onReconnect);
     return () => {
       names.forEach(name => client.off(name, handler));
-      reconnectListeners.delete(handler);
+      reconnectListeners.delete(onReconnect);
     };
   }, [eventsKey, enabled]);
 }

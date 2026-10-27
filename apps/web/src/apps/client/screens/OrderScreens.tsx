@@ -1,4 +1,8 @@
 import { CheckCircle2, ChevronRight, Circle, Clock, MapPin, Receipt, Share2, ShoppingBag, XCircle } from 'lucide-react';
+import { useState } from 'react';
+import BottomSheet from '@/components/ui/BottomSheet';
+import { errorMessage } from '@/lib/api/client';
+import { cancelOrder, useQueuePosition } from '@/services/clientExtrasService';
 import { cn, formatCents, formatDateTime } from '@/lib/utils';
 import EmptyState from '@/components/ui/EmptyState';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
@@ -73,6 +77,25 @@ export function OrderTrackingScreen() {
   const trackedId = orderId ?? active?.order.id ?? null;
   const query = useOrder(trackedId);
   const order = query.data;
+  const position = useQueuePosition(order ?? null, order?.establishmentId ?? null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const { showToast } = useClient();
+
+  async function confirmCancellation() {
+    if (!order) return;
+    setCancelling(true);
+    try {
+      const result = await cancelOrder(order.id);
+      showToast(result.payment?.status === 'refunded' ? 'Pedido cancelado — pagamento estornado' : 'Pedido cancelado');
+      setConfirmCancel(false);
+    } catch (error) {
+      showToast(errorMessage(error, 'Não foi possível cancelar o pedido.'));
+      setConfirmCancel(false);
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   if (!trackedId) {
     return (
@@ -140,6 +163,26 @@ export function OrderTrackingScreen() {
         </div>
       )}
 
+      {position.data && !cancelled && (status === 'paid' || status === 'preparing') && (
+        <div data-testid="queue-position" className="mx-5 mt-2 bg-card border border-border rounded-xl p-4 flex items-center justify-between gap-3" aria-live="polite">
+          <div>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Sua posição na fila</p>
+            <p data-testid="queue-position-value" className="font-display font-bold text-foreground text-2xl">
+              {position.data.state === 'preparing' ? 'Em preparo' : position.data.position !== null ? `${position.data.position}º` : '—'}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {position.data.ordersAhead === 0 ? 'Nenhum pedido à sua frente' : `${position.data.ordersAhead} pedido${position.data.ordersAhead === 1 ? '' : 's'} à sua frente`}
+            </p>
+          </div>
+          <div className="text-right">
+            {position.data.remainingMinutes !== null && (
+              <p data-testid="queue-remaining" className="text-sm font-medium text-foreground">~{position.data.remainingMinutes} min</p>
+            )}
+            {position.data.late && <p data-testid="queue-late" className="text-xs font-semibold text-warning">Demorando mais que o previsto</p>}
+          </div>
+        </div>
+      )}
+
       {!cancelled && (
         <div className="px-5 py-4 flex flex-col gap-1">
           {ORDER_STEPS.map((step, index) => {
@@ -174,17 +217,40 @@ export function OrderTrackingScreen() {
               <span className="text-muted-foreground flex-shrink-0">{formatCents(item.unitPriceCents * item.quantity)}</span>
             </div>
           ))}
+          {order.discountCents > 0 && (
+            <div className="flex justify-between text-sm py-1 text-success" data-testid="order-discount">
+              <span>Desconto FilaZero Club ({order.redeemedPoints} pts)</span>
+              <span>-{formatCents(order.discountCents)}</span>
+            </div>
+          )}
           <div className="border-t border-border mt-2 pt-2 flex justify-between">
             <span className="font-display font-bold text-foreground text-sm">Total</span>
             <span className="font-display font-bold text-foreground text-sm">{formatCents(order.totalCents)}</span>
           </div>
         </div>
+        {order.cancellable && (
+          <button onClick={() => setConfirmCancel(true)} className="w-full border border-error/40 text-error rounded-xl py-3 text-sm font-medium">
+            Cancelar pedido
+          </button>
+        )}
         {paid && (
           <button onClick={() => openOrder(order.id, 'receipt')} className="w-full border border-border rounded-xl py-3 text-sm font-medium text-foreground hover:bg-muted transition-colors">
             Ver comprovante
           </button>
         )}
       </div>
+      {confirmCancel && (
+        <BottomSheet onClose={() => setConfirmCancel(false)}>
+          <p className="font-display font-bold text-foreground text-lg text-center mb-2">Cancelar o pedido #{order.number}?</p>
+          <p className="text-muted-foreground text-sm text-center mb-6">
+            {paid ? 'O pagamento será estornado e os pontos do FilaZero Club voltam para você.' : 'O pedido ainda não foi pago e será cancelado.'} Depois que o preparo começa, não dá mais para cancelar.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button disabled={cancelling} onClick={() => void confirmCancellation()} className="w-full bg-error text-white font-display font-semibold py-4 rounded-xl disabled:opacity-60">Cancelar pedido</button>
+            <button onClick={() => setConfirmCancel(false)} className="w-full text-muted-foreground text-sm py-3">Manter pedido</button>
+          </div>
+        </BottomSheet>
+      )}
     </div>
   );
 }
@@ -242,6 +308,9 @@ export function ReceiptScreen() {
             </div>
           ))}
           <div className="border-t border-dashed border-border mt-3 pt-3">
+            {order.discountCents > 0 && (
+              <div className="flex justify-between text-sm text-success pb-1"><span>Desconto FilaZero Club ({order.redeemedPoints} pts)</span><span>-{formatCents(order.discountCents)}</span></div>
+            )}
             <div className="flex justify-between font-display font-bold"><span>Total</span><span>{formatCents(order.totalCents)}</span></div>
           </div>
           <div className="border-t border-border mt-4 pt-4 text-center">

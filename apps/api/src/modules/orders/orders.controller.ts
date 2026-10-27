@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import type { OrderDto, Page } from '@filafacil/shared';
+import type { OrderDto, OrderQueuePositionDto, Page } from '@filafacil/shared';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { PageQueryDto } from '../../common/pagination/page-query.dto.js';
 import { CurrentAuth } from '../auth/auth.decorators.js';
@@ -41,6 +41,23 @@ export class OrdersController {
   @ApiOperation({ summary: 'Pedido com itens, status, estimativa, retirada e pagamento (ficha 09)' })
   @ApiErrors(404)
   get(@CurrentAuth() auth: AuthContext, @Param('orderId', ParseUUIDPipe) orderId: string): Promise<OrderDto> {
+    return this.orders.getMine(auth.userId, orderId);
+  }
+
+  @Get(':orderId/queue-position')
+  @ApiOperation({ summary: 'Posição na fila de preparo e tempo restante estimado (ficha 51)' })
+  @ApiErrors(404)
+  queuePosition(@CurrentAuth() auth: AuthContext, @Param('orderId', ParseUUIDPipe) orderId: string): Promise<OrderQueuePositionDto> {
+    return this.orders.queuePosition(auth.userId, orderId);
+  }
+
+  @Post(':orderId/cancel')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 12, ttl: MINUTE } })
+  @ApiOperation({ summary: 'Cliente cancela antes do preparo (recebido/pago); se pago, o estorno é automático (ficha 10)' })
+  @ApiErrors(404, 409, 502, 503)
+  async cancel(@CurrentAuth() auth: AuthContext, @Param('orderId', ParseUUIDPipe) orderId: string): Promise<OrderDto> {
+    await this.payments.cancel({ customerId: auth.userId }, orderId);
     return this.orders.getMine(auth.userId, orderId);
   }
 

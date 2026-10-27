@@ -41,3 +41,9 @@ export class MergeTablesDto {
   @IsUUID(undefined, { each: true })
   tableIds!: string[];
 }
+
+export class MyCallQueryDto {
+  @IsOptional()
+  @IsUUID()
+  tableId?: string;
+}

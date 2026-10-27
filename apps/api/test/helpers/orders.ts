@@ -26,6 +26,7 @@ export interface OrderBody {
   tableId?: string;
   items: { menuItemId: string; quantity: number; notes?: string }[];
   expectedTotalCents?: number;
+  redeemPoints?: number;
   clientRequestId?: string;
 }
 
@@ -34,3 +35,41 @@ export async function placeOrder(agent: Agent, body: OrderBody, csrf: Record<str
 }
 
 export { login };
+
+export interface SeedOrder {
+  userId: string;
+  establishmentId: string;
+  status?: 'received' | 'paid' | 'preparing' | 'ready' | 'delivered' | 'cancelled';
+  tableId?: string | null;
+  /** Aprovado no gateway fictício (linha `payments` aprovada, com id de provedor). */
+  withPayment?: boolean;
+  paidAt?: Date;
+  items: { menuItemId: string; name: string; unitPriceCents: number; quantity?: number; stationId?: string | null }[];
+  data?: Record<string, unknown>;
+}
+
+/** Cria um pedido direto no banco (estado já avançado), sem passar pelo gateway. */
+export async function seedOrder(prisma: PrismaService, input: SeedOrder) {
+  const status = input.status ?? 'paid';
+  const total = input.items.reduce((sum, item) => sum + item.unitPriceCents * (item.quantity ?? 1), 0);
+  const paid = status !== 'received' && input.withPayment !== false;
+  const order = await prisma.order.create({
+    data: {
+      userId: input.userId,
+      establishmentId: input.establishmentId,
+      tableId: input.tableId ?? null,
+      status,
+      totalCents: total,
+      pickupCode: '1234',
+      paidAt: paid ? (input.paidAt ?? new Date()) : null,
+      items: { create: input.items.map(item => ({ menuItemId: item.menuItemId, name: item.name, unitPriceCents: item.unitPriceCents, quantity: item.quantity ?? 1, stationId: item.stationId ?? null })) },
+      ...(input.data as object),
+    },
+  });
+  if (paid) {
+    await prisma.payment.create({
+      data: { orderId: order.id, attempt: 1, method: 'credit', status: 'approved', amountCents: total, providerPaymentId: `seed-${order.id}`, approvedAt: input.paidAt ?? new Date() },
+    });
+  }
+  return order;
+}

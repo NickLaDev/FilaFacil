@@ -19,6 +19,8 @@ export interface MenuItemView {
   available: boolean;
   /** Ficha 46: destaque manual do gestor. */
   highlighted: boolean;
+  /** Ficha 24: estação da cozinha (null = Geral). */
+  stationId: string | null;
 }
 
 const toView = (item: ManagedMenuItem): MenuItemView => ({
@@ -32,6 +34,7 @@ const toView = (item: ManagedMenuItem): MenuItemView => ({
   image: item.imageUrl,
   available: item.available,
   highlighted: item.highlighted,
+  stationId: item.stationId,
 });
 
 /** Ordem padrão das categorias conhecidas quando a casa ainda não definiu outra. */
@@ -79,6 +82,7 @@ export interface MenuItemInput {
   categoryName: string;
   priceCents: number;
   available: boolean;
+  stationId?: string | null;
   /** Link https externo; foto enviada do computador vai por uploadMenuItemPhoto. */
   imageUrl?: string;
 }

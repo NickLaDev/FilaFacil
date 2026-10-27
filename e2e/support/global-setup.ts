@@ -61,6 +61,15 @@ export default async function globalSetup() {
     }
   } else console.log(`[E2E setup] login admin falhou (${al.status()}); horários não ajustados`);
   await admin.dispose();
+  // Ficha 07: contas do seed já "viram" o onboarding (senão a sobreposição de boas-vindas atrapalharia as demais jornadas).
+  // Só no banco filafacil_e2e; o teste do onboarding usa contas descartáveis. Falha aqui não derruba a suíte.
+  for (const email of ['joao@email.com', 'marina.s@gmail.com', 'pedro.c@hotmail.com']) {
+    await pace('login');
+    const c = await request.newContext({ extraHTTPHeaders: CLIENT_HEADER });
+    const l = await c.post(`${API_URL}/auth/login`, { data: { email, password: PASSWORD } });
+    if (l.ok()) await c.post(`${API_URL}/me/onboarding/complete`, { data: { skipped: true } }).catch(() => null);
+    await c.dispose();
+  }
   mkdirSync(path.join(ROOT, 'e2e/.results'), { recursive: true });
   writeFileSync(path.join(ROOT, 'e2e/.results/latency.jsonl'), ''); // latências só da execução atual
   await ctx.dispose();

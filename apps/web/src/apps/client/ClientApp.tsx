@@ -25,6 +25,12 @@ import { CartScreen, OrderConfirmedScreen, PaymentScreen } from './screens/Check
 import { OrderTrackingScreen, OrdersScreen, ReceiptScreen } from './screens/OrderScreens';
 import { AddressesScreen, EditProfileScreen, ProfileScreen, ReservationsScreen } from './screens/ProfileScreens';
 import { AccountSecurityScreen, DeleteAccountScreen } from './screens/AccountScreens';
+import { ClubScreen } from './screens/ClubScreen';
+import OnboardingScreen from './screens/OnboardingScreen';
+import { REALTIME_EVENTS } from '@filafacil/shared';
+import { useUserRealtime } from '@/lib/realtime';
+import { completeOnboarding, useOnboarding } from '@/services/clientExtrasService';
+import { errorMessage } from '@/lib/api/client';
 
 const EMPTY_SIGNUP: SignupDraft = { name: '', cpf: '', email: '', phone: '', password: '' };
 const MAX_LINE_QUANTITY = 20;
@@ -61,6 +67,7 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
   'order-tracking': () => <OrderTrackingScreen />,
   receipt: () => <ReceiptScreen />,
   profile: () => <ProfileScreen />,
+  club: () => <ClubScreen />,
   'edit-profile': () => <EditProfileScreen />,
   addresses: () => <AddressesScreen />,
   'account-security': () => <AccountSecurityScreen />,
@@ -68,7 +75,7 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
 };
 
 /** Telas que exigem conta; visitante/deslogado cai no login. */
-const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations']);
+const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations', 'club']);
 
 interface LaunchParams {
   oauth: { success: boolean; error: string | null };
@@ -142,6 +149,11 @@ export default function ClientApp() {
   const [verification, setVerification] = useState<VerificationRequest | null>(null);
   const [signupDraft, setSignupDraft] = useState<SignupDraft>(EMPTY_SIGNUP);
 
+  const [readyOrderId, setReadyOrderId] = useState<string | null>(null);
+  const [onboardingClosed, setOnboardingClosed] = useState(false);
+  const announcedReady = useRef(new Set<string>());
+  const onboarding = useOnboarding(Boolean(account));
+
   const go = useCallback((next: ClientScreen) => {
     setScreen(next);
     window.scrollTo(0, 0);
@@ -161,6 +173,31 @@ export default function ClientApp() {
         else handleSessionExpired();
       }),
     [],
+  );
+
+  // Ficha 05: aviso in-app quando o pedido fica pronto (um aviso por pedido, mesmo se o evento chegar repetido).
+  useUserRealtime(
+    [REALTIME_EVENTS.orderReady],
+    payload => {
+      const id = payload?.orderId;
+      if (!id || announcedReady.current.has(id)) return;
+      announcedReady.current.add(id);
+      setReadyOrderId(id);
+      showToast('Seu pedido está pronto!');
+    },
+    Boolean(account),
+  );
+
+  const finishOnboarding = useCallback(
+    async (skipped: boolean) => {
+      setOnboardingClosed(true);
+      try {
+        await completeOnboarding(skipped);
+      } catch (error) {
+        showToast(errorMessage(error));
+      }
+    },
+    [showToast],
   );
 
   const signOut = useCallback(async () => {
@@ -261,7 +298,17 @@ export default function ClientApp() {
       <div className="relative min-h-screen">
         <Toast message={toastMessage} />
         <TableLinkHandler code={tableLink} />
+        {readyOrderId && activeScreen !== 'order-tracking' && (
+          <div role="status" data-testid="order-ready-banner" className="fixed top-0 inset-x-0 z-50 bg-success text-white px-4 py-3 flex items-center gap-3 shadow-lg">
+            <span className="flex-1 text-sm font-semibold">🎉 Seu pedido está pronto! Retire no balcão.</span>
+            <button onClick={() => { value.openOrder(readyOrderId); setReadyOrderId(null); }} className="text-xs font-bold bg-white/20 rounded-lg px-3 py-1.5">Ver pedido</button>
+            <button onClick={() => setReadyOrderId(null)} aria-label="Fechar aviso" className="text-white/80 text-lg leading-none">×</button>
+          </div>
+        )}
         {SCREENS[activeScreen]()}
+        {account && onboarding.data && !onboarding.data.completed && !onboardingClosed && (activeScreen === 'home-out-of-bar' || activeScreen === 'home-in-bar') && (
+          <OnboardingScreen onFinish={skipped => void finishOnboarding(skipped)} />
+        )}
         {BOTTOM_NAV_SCREENS.has(activeScreen) && <ClientBottomNav screen={activeScreen} />}
       </div>
     </ClientContext.Provider>

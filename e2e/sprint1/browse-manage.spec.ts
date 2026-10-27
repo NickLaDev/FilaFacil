@@ -172,6 +172,10 @@ test('S1-21 · fila de espera: adicionar, reordenar, avisar ao liberar mesa, sen
   const E = SEED.mestre;
   const mgr = await managerApi();
   const stamp = uniq().slice(0, 5);
+  // "Subir" só existe a partir da 2ª posição: com a fila vazia (banco recém-resetado) cria-se um grupo antes (removido no fim pelo stamp).
+  if ((await mgr.get(`establishments/${E}/waitlist`)).body.entries.length === 0) {
+    expect((await mgr.post(`establishments/${E}/waitlist`, { name: `Base ${stamp}`, phone: '(19) 97777-1111', partySize: 2 })).status).toBe(201);
+  }
   const ctx = await newStaffContext(browser, ACCOUNTS.manager.email);
   const page = await ctx.newPage();
   await page.goto('/gestor');

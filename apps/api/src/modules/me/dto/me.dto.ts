@@ -47,3 +47,10 @@ export class CreateAddressDto {
 }
 
 export class UpdateAddressDto extends PartialType(CreateAddressDto) {}
+
+export class CompleteOnboardingDto {
+  /** Informativo: o usuário pulou em vez de concluir. */
+  @IsOptional()
+  @IsBoolean()
+  skipped?: boolean;
+}

@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type {
   CreatedTableCallDto,
+  MyTableCallDto,
+  StaffTableCallDto,
   TableCallDto,
   TableCheckDto,
   TableMapDto,
@@ -38,6 +40,13 @@ type MapRow = Prisma.DiningTableGetPayload<{ select: typeof MAP_SELECT }>;
 
 /** Pedidos que entram na conta: já pagos (não cancelados nem aguardando pagamento). */
 const CHECK_STATUSES = ['paid', 'preparing', 'ready', 'delivered'] as const;
+
+const toMyCall = (call: { id: string; tableId: string; createdAt: Date; resolvedAt: Date | null }): MyTableCallDto => ({
+  id: call.id,
+  tableId: call.tableId,
+  createdAt: call.createdAt.toISOString(),
+  resolvedAt: call.resolvedAt?.toISOString() ?? null,
+});
 
 const byLabel = (a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label, 'pt-BR', { numeric: true });
 
@@ -187,6 +196,7 @@ export class TablesService {
       try {
         call = await this.prisma.tableCall.create({ data: { tableId, establishmentId: table.establishmentId, userId } });
         this.notify(table.establishmentId);
+        this.realtime.tableCallUpdated(table.establishmentId, tableId, call.id, userId);
       } catch (error) {
         // Dois chamados simultâneos: o índice único parcial deixa passar só um.
         if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
@@ -199,12 +209,45 @@ export class TablesService {
 
   /** Atendente atendeu o chamado da mesa (ou de qualquer mesa do grupo). */
   async resolveCalls(establishmentId: string, tableId: string, actorId: string): Promise<TableMapDto> {
-    await this.prisma.$transaction(async tx => {
+    const resolved = await this.prisma.$transaction(async tx => {
       const ids = await this.scopeOrFail(tx, establishmentId, tableId);
-      await tx.tableCall.updateMany({ where: { tableId: { in: ids }, resolvedAt: null }, data: { resolvedAt: new Date(), resolvedById: actorId } });
+      const open = await tx.tableCall.findMany({ where: { tableId: { in: ids }, resolvedAt: null }, select: { id: true, tableId: true, userId: true } });
+      await tx.tableCall.updateMany({ where: { id: { in: open.map(call => call.id) }, resolvedAt: null }, data: { resolvedAt: new Date(), resolvedById: actorId } });
+      return open;
     });
     this.notify(establishmentId);
+    for (const call of resolved) this.realtime.tableCallUpdated(establishmentId, call.tableId, call.id, call.userId);
     return this.map(establishmentId);
+  }
+
+  /** Ficha 18: chamados abertos da casa, do mais antigo ao mais novo. */
+  async listOpenCalls(establishmentId: string): Promise<StaffTableCallDto[]> {
+    const rows = await this.prisma.tableCall.findMany({ where: { establishmentId, resolvedAt: null }, orderBy: { createdAt: 'asc' }, include: { table: { select: { label: true } } } });
+    return rows.map(row => ({ id: row.id, tableId: row.tableId, tableLabel: row.table.label, createdAt: row.createdAt.toISOString(), resolvedAt: null }));
+  }
+
+  /** Resolve um chamado específico (idempotente: já resolvido não muda nada). */
+  async resolveCall(establishmentId: string, callId: string, actorId: string): Promise<void> {
+    const call = await this.prisma.tableCall.findFirst({ where: { id: callId, establishmentId }, select: { id: true, tableId: true, userId: true } });
+    if (!call) throw notFound('Chamado não encontrado.');
+    const changed = await this.prisma.tableCall.updateMany({ where: { id: callId, resolvedAt: null }, data: { resolvedAt: new Date(), resolvedById: actorId } });
+    if (changed.count > 0) {
+      this.notify(establishmentId);
+      this.realtime.tableCallUpdated(establishmentId, call.tableId, call.id, call.userId);
+    }
+  }
+
+  /** Chamado aberto do cliente na mesa (ou o mais recente se não informar a mesa). */
+  async myOpenCall(userId: string, tableId?: string): Promise<MyTableCallDto | null> {
+    const call = await this.prisma.tableCall.findFirst({ where: { userId, resolvedAt: null, ...(tableId ? { tableId } : {}) }, orderBy: { createdAt: 'desc' } });
+    return call ? toMyCall(call) : null;
+  }
+
+  /** O cliente acompanha o próprio chamado até a equipe resolver; chamado de outro responde 404. */
+  async myCall(userId: string, callId: string): Promise<MyTableCallDto> {
+    const call = await this.prisma.tableCall.findFirst({ where: { id: callId, userId } });
+    if (!call) throw notFound('Chamado não encontrado.');
+    return toMyCall(call);
   }
 
   // ─── Mesclar mesas (ficha 47) ─────────────────────────────────────────────

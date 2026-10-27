@@ -6,9 +6,9 @@ import { otpMark, waitForOtp } from './otp';
 export const MOBILE = { width: 390, height: 844 };
 
 /** Contexto de navegador isolado (cookies/storage próprios): cliente em viewport móvel, equipe em desktop. */
-export async function newClientContext(browser: Browser, opts: { email?: string; password?: string; fresh?: boolean } = {}) {
+export async function newClientContext(browser: Browser, opts: { email?: string; password?: string; fresh?: boolean; keepOnboarding?: boolean } = {}) {
   const context = await browser.newContext({ viewport: MOBILE, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', baseURL: WEB_URL });
-  if (opts.email) await loginContext(context, opts.email, opts.password ?? PASSWORD, { fresh: opts.fresh });
+  if (opts.email) await loginContext(context, opts.email, opts.password ?? PASSWORD, { fresh: opts.fresh, keepOnboarding: opts.keepOnboarding });
   return context;
 }
 

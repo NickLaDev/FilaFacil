@@ -1,18 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { STAFF_ORDER_TRANSITIONS, type OrderDto, type OrderStatus, type Page, type StaffOrderDto } from '@filafacil/shared';
+import { discountForPoints, STAFF_ORDER_TRANSITIONS, type OrderDto, type OrderQueueDto, type OrderQueuePositionDto, type OrderStatus, type Page, type StaffOrderDto } from '@filafacil/shared';
 import { conflict, forbidden, notFound, unprocessable } from '../../common/http/app-error.js';
 import { pageArgs, toPage } from '../../common/pagination/page-query.dto.js';
 import { bestPromotion, finalPriceCents } from '../../common/pricing.js';
-import { PrismaService } from '../../database/prisma.service.js';
+import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { lockResource } from '../../database/advisory-lock.js';
 import { EntitlementsService } from '../access/entitlements.service.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import { RestaurantsService } from '../restaurants/restaurants.service.js';
-import type { CreateOrderDto, StaffOrdersQueryDto } from './dto/orders.dto.js';
-import { ORDER_INCLUDE, toOrderDto, toStaffOrderDto, type OrderWithDetails } from './order.mapper.js';
+import type { CreateOrderDto, QueueQueryDto, StaffOrdersQueryDto } from './dto/orders.dto.js';
+import { LoyaltyService } from '../loyalty/loyalty.service.js';
+import { OrderEffectsService } from './order-effects.service.js';
+import { ageMinutes, estimateOf, ORDER_INCLUDE, toOrderDto, toStaffOrderDto, type OrderWithDetails } from './order.mapper.js';
 
 /** Pedidos em andamento na cozinha: já pagos e ainda não entregues. */
 const ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
@@ -30,6 +32,8 @@ export class OrdersService {
     private readonly restaurants: RestaurantsService,
     private readonly entitlements: EntitlementsService,
     private readonly realtime: RealtimeService,
+    private readonly effects: OrderEffectsService,
+    private readonly loyalty: LoyaltyService,
   ) {}
 
   // ─── Cliente ──────────────────────────────────────────────────────────────
@@ -56,26 +60,37 @@ export class OrdersService {
     if (dto.tableId && !table) throw unprocessable('INVALID_TABLE', 'Esta mesa não pertence ao restaurante do pedido.');
 
     const lines = await this.priceLines(establishment.id, dto.items, new Date());
-    const totalCents = lines.reduce((sum, line) => sum + line.unitPriceCents * line.quantity, 0);
-    if (dto.expectedTotalCents !== undefined && dto.expectedTotalCents !== totalCents) {
+    const subtotalCents = lines.reduce((sum, line) => sum + line.unitPriceCents * line.quantity, 0);
+    const redeemPoints = dto.redeemPoints ?? 0;
+    // O total que o cliente viu já vem líquido do desconto de pontos (ficha 14).
+    const expectedNet = subtotalCents - discountForPoints(redeemPoints);
+    if (dto.expectedTotalCents !== undefined && dto.expectedTotalCents !== expectedNet) {
       throw conflict('PRICE_CHANGED', 'Os preços mudaram desde que você montou o pedido. Revise o carrinho.');
     }
+    if (redeemPoints > 0) await this.loyalty.releaseExpired(auth.userId);
 
     try {
-      const created = await this.prisma.order.create({
-        data: {
-          userId: auth.userId,
-          establishmentId: establishment.id,
-          tableId: table?.id,
-          tableLabel: table?.label,
-          clientRequestId: dto.clientRequestId,
-          totalCents,
-          pickupCode: pickupCode(),
-          items: { create: lines },
-        },
-        include: ORDER_INCLUDE,
+      const created = await this.prisma.$transaction(async tx => {
+        const order = await tx.order.create({
+          data: {
+            userId: auth.userId,
+            establishmentId: establishment.id,
+            tableId: table?.id,
+            tableLabel: table?.label,
+            clientRequestId: dto.clientRequestId,
+            totalCents: subtotalCents,
+            pickupCode: pickupCode(),
+            items: { create: lines },
+          },
+        });
+        if (redeemPoints > 0) {
+          const discountCents = await this.loyalty.reserveRedeem(tx, auth.userId, order.id, redeemPoints, subtotalCents);
+          await tx.order.update({ where: { id: order.id }, data: { discountCents, redeemedPoints: redeemPoints, totalCents: subtotalCents - discountCents } });
+        }
+        return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
       });
       this.realtime.orderUpdated(auth.userId, establishment.id, created.id);
+      if (redeemPoints > 0) this.loyalty.notify(auth.userId);
       return toOrderDto(created);
     } catch (error) {
       // Duas requisições simultâneas com o mesmo identificador: o índice único decide, a outra reaproveita.
@@ -100,6 +115,7 @@ export class OrdersService {
     if (
       existing.establishmentId !== dto.establishmentId ||
       (existing.tableId ?? null) !== (dto.tableId ?? null) ||
+      existing.redeemedPoints !== (dto.redeemPoints ?? 0) ||
       signature(existing.items) !== signature(dto.items.map(item => ({ ...item, notes: (item.notes ?? '').slice(0, MAX_NOTES_LENGTH) })))
     ) {
       throw conflict('ORDER_CONTENT_CHANGED', 'O carrinho mudou desde o último pedido. Revise o carrinho e confirme de novo.');
@@ -119,6 +135,7 @@ export class OrdersService {
         name: true,
         priceCents: true,
         available: true,
+        stationId: true,
         promotionItems: {
           where: { promotion: { startsAt: { lte: now }, endsAt: { gte: now } } },
           select: { promotion: { select: { discountPercent: true } } },
@@ -144,6 +161,7 @@ export class OrdersService {
         unitPriceCents: finalPriceCents(item.priceCents, promotion),
         quantity: line.quantity,
         notes: (line.notes ?? '').slice(0, MAX_NOTES_LENGTH),
+        stationId: item.stationId,
       };
     });
   }
@@ -158,6 +176,7 @@ export class OrdersService {
       where: { id: orderId },
       include: { items: true, establishment: { include: { openingHours: { select: { weekday: true, opensAt: true, closesAt: true } } } } },
     });
+    if (order.tabSettledAt) throw conflict('ALREADY_PAID', 'Este pedido já foi pago na comanda.');
     if (Date.now() - order.createdAt.getTime() > UNPAID_ORDER_TTL_MS) {
       throw conflict('ORDER_EXPIRED', 'Este pedido expirou sem pagamento. Revise o carrinho e confirme de novo.');
     }
@@ -193,6 +212,43 @@ export class OrdersService {
     return toOrderDto(order);
   }
 
+  /**
+   * Ficha 51: posição do pedido na fila FIFO da casa (pagos, em preparo e os da comanda) e tempo restante
+   * (estimativa − tempo desde o pagamento). O app recalcula ao receber `order.updated`/`queue.updated` e por polling.
+   */
+  async queuePosition(userId: string, orderId: string, now = new Date()): Promise<OrderQueuePositionDto> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      select: { id: true, number: true, status: true, tabId: true, paidAt: true, createdAt: true, establishmentId: true, estimatedMinutesOverride: true, establishment: { select: { averageWaitMinutes: true } } },
+    });
+    if (!order) throw notFound('Pedido não encontrado.');
+    const estimatedMinutes = estimateOf(order);
+    const age = ageMinutes(order, now);
+    const inQueue = order.status === 'paid' || order.status === 'preparing' || (order.status === 'received' && order.tabId !== null);
+    if (order.status === 'ready') return { orderId, state: 'ready', position: null, ordersAhead: 0, estimatedMinutes: null, remainingMinutes: null, late: false };
+    if (order.status === 'delivered' || order.status === 'cancelled') return { orderId, state: 'done', position: null, ordersAhead: 0, estimatedMinutes: null, remainingMinutes: null, late: false };
+    if (!inQueue) return { orderId, state: 'waiting', position: null, ordersAhead: 0, estimatedMinutes, remainingMinutes: Math.max(0, estimatedMinutes - age), late: false };
+
+    const mine = (order.paidAt ?? order.createdAt).getTime();
+    const others = await this.prisma.order.findMany({
+      where: { establishmentId: order.establishmentId, id: { not: order.id }, OR: [{ status: { in: ['paid', 'preparing'] } }, { status: 'received', tabId: { not: null } }] },
+      select: { number: true, paidAt: true, createdAt: true },
+    });
+    const ahead = others.filter(other => {
+      const time = (other.paidAt ?? other.createdAt).getTime();
+      return time < mine || (time === mine && other.number < order.number);
+    }).length;
+    return {
+      orderId,
+      state: order.status === 'preparing' ? 'preparing' : 'waiting',
+      position: ahead + 1,
+      ordersAhead: ahead,
+      estimatedMinutes,
+      remainingMinutes: Math.max(0, estimatedMinutes - age),
+      late: age > estimatedMinutes,
+    };
+  }
+
   // ─── Equipe ───────────────────────────────────────────────────────────────
 
   async listForStaff(establishmentId: string, query: StaffOrdersQueryDto): Promise<Page<StaffOrderDto>> {
@@ -206,7 +262,31 @@ export class OrdersService {
       }),
       this.prisma.order.count({ where }),
     ]);
-    return toPage(orders.map(toStaffOrderDto), total, query);
+    return toPage(orders.map(order => toStaffOrderDto(order)), total, query);
+  }
+
+  /**
+   * Fila FIFO (ficha 23): pedidos pagos, em preparo e prontos, mais os atribuídos a comanda (pagamento posterior),
+   * do mais antigo ao mais novo (desde o pagamento). Filtro opcional por status e por estação (ficha 24).
+   */
+  async queue(establishmentId: string, query: QueueQueryDto, now = new Date()): Promise<OrderQueueDto> {
+    const rows = await this.prisma.order.findMany({
+      where: {
+        establishmentId,
+        OR: [{ status: { in: ACTIVE_STATUSES } }, { status: 'received', tabId: { not: null } }],
+      },
+      include: { ...ORDER_INCLUDE, user: { select: { name: true } } },
+    });
+    const sorted = rows.sort((a, b) => (a.paidAt ?? a.createdAt).getTime() - (b.paidAt ?? b.createdAt).getTime() || a.number - b.number);
+    const station = query.stationId;
+    const filtered = sorted
+      .filter(order => !query.status || order.status === query.status)
+      .map(order => (station ? { ...order, items: order.items.filter(item => (station === 'general' ? item.stationId === null : item.stationId === station)) } : order))
+      .filter(order => order.items.length > 0);
+    const items = filtered.map((order, index) => ({ ...toStaffOrderDto(order, now), queuePosition: index + 1 }));
+    const counts = { received: 0, paid: 0, preparing: 0, ready: 0 };
+    for (const order of items) if (order.status in counts) counts[order.status as keyof typeof counts]++;
+    return { items, counts, lateCount: items.filter(order => order.late).length };
   }
 
   /** Só avança um passo por vez (pago → preparo → pronto → entregue); pedido não pago nunca entra na cozinha. */
@@ -216,18 +296,79 @@ export class OrdersService {
       await lockResource(tx, `order:${orderId}`);
       const current = await tx.order.findFirst({
         where: { id: orderId, establishmentId },
-        select: { id: true, userId: true, status: true, payments: { where: { status: 'approved', refundRequestedAt: { not: null } }, select: { id: true }, take: 1 } },
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          tabId: true,
+          items: { select: { id: true, stationId: true, readyAt: true } },
+          payments: { where: { status: 'approved', refundRequestedAt: { not: null } }, select: { id: true }, take: 1 },
+        },
       });
       if (!current) throw notFound('Pedido não encontrado.');
-      if (STAFF_ORDER_TRANSITIONS[current.status] !== status) {
+      // Pedido na comanda (pagamento posterior) pode ir para o preparo sem estar pago; sem comanda, nunca.
+      const expected = STAFF_ORDER_TRANSITIONS[current.status] ?? (current.status === 'received' && current.tabId ? 'preparing' : undefined);
+      if (expected !== status) {
         throw unprocessable('INVALID_STATUS_TRANSITION', 'Este pedido não pode ir para esse status agora.');
       }
       if (current.payments.length > 0) throw conflict('REFUND_IN_PROGRESS', 'Há um estorno em andamento neste pedido. Conclua o estorno antes de avançar.');
-      // Atualização condicional: duas pessoas avançando ao mesmo tempo não pulam etapas.
-      const changed = await tx.order.updateMany({ where: { id: current.id, status: current.status }, data: { status } });
-      if (changed.count === 0) throw conflict('ORDER_STATUS_CHANGED', 'O pedido foi atualizado por outra pessoa. Recarregue.');
+      if (status === 'ready' && current.items.some(item => item.stationId && !item.readyAt)) {
+        throw conflict('STATIONS_PENDING', 'Ainda há estações com itens em preparo. Conclua cada estação.');
+      }
+      await this.transition(tx, current, status);
       return current;
     });
+    this.realtime.orderUpdated(order.userId, establishmentId, order.id);
+    if (status === 'preparing') await this.effects.afterPreparing(establishmentId, order.id);
+    if (status === 'ready') await this.effects.afterReady({ id: order.id, userId: order.userId, establishmentId });
+    if (status === 'delivered') this.effects.afterDelivered(order.userId);
+    return this.getForStaff(establishmentId, order.id);
+  }
+
+  /** Aplica o novo status com carimbo de tempo e efeitos transacionais (sob o lock do pedido). */
+  private async transition(tx: PrismaTx, current: { id: string; status: OrderStatus }, status: OrderStatus) {
+    const now = new Date();
+    const stamp = { preparing: { preparingAt: now }, ready: { readyAt: now }, delivered: { deliveredAt: now } } as Partial<Record<OrderStatus, Prisma.OrderUpdateManyMutationInput>>;
+    // Atualização condicional: duas pessoas avançando ao mesmo tempo não pulam etapas.
+    const changed = await tx.order.updateMany({ where: { id: current.id, status: current.status }, data: { status, ...stamp[status] } });
+    if (changed.count === 0) throw conflict('ORDER_STATUS_CHANGED', 'O pedido foi atualizado por outra pessoa. Recarregue.');
+    if (status === 'ready') await tx.orderItem.updateMany({ where: { orderId: current.id, readyAt: null }, data: { readyAt: now } });
+    if (status === 'preparing') await this.effects.onPreparing(tx, current.id);
+    if (status === 'delivered') await this.effects.onDelivered(tx, current.id);
+  }
+
+  /**
+   * Estação concluiu seus itens (ficha 24). O pedido só vira `ready` quando todas as estações terminaram
+   * (a última dispara o `ready` automaticamente, com aviso ao cliente). `stationId` null = "Geral".
+   */
+  async markStationReady(establishmentId: string, orderId: string, stationId: string | null): Promise<StaffOrderDto> {
+    const result = await this.prisma.$transaction(async tx => {
+      await lockResource(tx, `order:${orderId}`);
+      const current = await tx.order.findFirst({
+        where: { id: orderId, establishmentId },
+        select: { id: true, userId: true, status: true, items: { select: { id: true, stationId: true, readyAt: true } } },
+      });
+      if (!current) throw notFound('Pedido não encontrado.');
+      if (current.status !== 'preparing') throw unprocessable('INVALID_STATUS_TRANSITION', 'Só é possível concluir estações de um pedido em preparo.');
+      const mine = current.items.filter(item => (item.stationId ?? null) === stationId);
+      if (mine.length === 0) throw unprocessable('NO_ITEMS_FOR_STATION', 'Esta estação não tem itens neste pedido.');
+      const now = new Date();
+      await tx.orderItem.updateMany({ where: { id: { in: mine.map(item => item.id) }, readyAt: null }, data: { readyAt: now } });
+      const allReady = current.items.every(item => (item.stationId ?? null) === stationId || item.readyAt);
+      if (allReady) await this.transition(tx, current, 'ready');
+      return { ...current, becameReady: allReady };
+    });
+    this.realtime.orderUpdated(result.userId, establishmentId, result.id);
+    if (result.becameReady) await this.effects.afterReady({ id: result.id, userId: result.userId, establishmentId });
+    return this.getForStaff(establishmentId, result.id);
+  }
+
+  /** Ficha 63: o gestor define o tempo estimado do pedido (1–240 min); o cliente passa a ver o valor ajustado. */
+  async adjustEstimate(establishmentId: string, orderId: string, minutes: number, actorId: string): Promise<StaffOrderDto> {
+    const order = await this.prisma.order.findFirst({ where: { id: orderId, establishmentId }, select: { id: true, userId: true, status: true } });
+    if (!order) throw notFound('Pedido não encontrado.');
+    if (order.status === 'delivered' || order.status === 'cancelled') throw unprocessable('ORDER_CLOSED', 'Este pedido já foi encerrado.');
+    await this.prisma.order.update({ where: { id: orderId }, data: { estimatedMinutesOverride: minutes, estimateAdjustedAt: new Date(), estimateAdjustedById: actorId } });
     this.realtime.orderUpdated(order.userId, establishmentId, order.id);
     return this.getForStaff(establishmentId, order.id);
   }

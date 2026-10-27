@@ -22,6 +22,19 @@ async function renderedOrder(page: Page, names: string[]) {
   return ys.sort((a, b) => a[1] - b[1]).map(([n]) => n);
 }
 
+/**
+ * A ordem renderizada converge para a esperada (asserção eventual). A lista pode mostrar o resultado anterior até a resposta
+ * nova ser aplicada, então ler o DOM logo após o clique/requisição mede a ordem velha. Exige >2 nomes visíveis (sem passar vazio).
+ */
+async function expectRenderedOrder(page: Page, expected: string[], message: string) {
+  await expect
+    .poll(async () => {
+      const shown = await renderedOrder(page, expected);
+      return shown.length > 2 && shown.join('|') === expected.filter(n => shown.includes(n)).join('|');
+    }, { message })
+    .toBe(true);
+}
+
 test('S1-11b · geolocalização do aparelho, filtros "Mais próximos"/"Menor espera"/"Aberto agora" e recusa de permissão', async ({ browser }) => {
   const anon = await Api.create();
   const ctx = await browser.newContext({ viewport: MOBILE, locale: 'pt-BR', baseURL: WEB_URL, geolocation: BARAO, permissions: ['geolocation'] });
@@ -42,21 +55,18 @@ test('S1-11b · geolocalização do aparelho, filtros "Mais próximos"/"Menor es
   const apiNames: string[] = byDistance.map((r: any) => r.name);
   expect(byDistance.map((r: any) => r.distanceM)).toEqual([...byDistance.map((r: any) => r.distanceM)].sort((a: number, b: number) => a - b));
   const unique = apiNames.filter(n => apiNames.filter(m => m === n).length === 1 && !apiNames.some(m => m !== n && m.includes(n)));
-  const shown = await renderedOrder(page, unique);
-  expect(shown.length).toBeGreaterThan(2);
-  expect(shown).toEqual(unique.filter(n => shown.includes(n)));
+  await expectRenderedOrder(page, unique, 'ordem exibida = ordem por distância da API');
 
   // "Menor espera": o app pede sort=wait ao servidor e mostra em ordem crescente de espera
-  const waitReq = page.waitForRequest(r => r.url().includes('/api/restaurants?') && r.url().includes('sort=wait'));
+  const waitRes = page.waitForResponse(r => r.url().includes('/api/restaurants?') && r.url().includes('sort=wait') && r.ok());
   await page.getByRole('button', { name: 'Menor espera', exact: true }).click();
-  await waitReq;
+  await waitRes;
   const byWait = (await anon.get('restaurants', { lat: BARAO.latitude, lng: BARAO.longitude, sort: 'wait', radiusKm: 50 })).body.items;
   const waits: number[] = byWait.map((r: any) => r.averageWaitMinutes);
   expect(waits).toEqual([...waits].sort((a, b) => a - b));
   const waitNames: string[] = byWait.filter((r: any) => r.orderingStatus !== 'closed').map((r: any) => r.name);
   const uniqueWait = waitNames.filter(n => waitNames.filter(m => m === n).length === 1 && !apiNames.some(m => m !== n && m.includes(n)));
-  const shownWait = await renderedOrder(page, uniqueWait);
-  expect(shownWait).toEqual(uniqueWait.filter(n => shownWait.includes(n)));
+  await expectRenderedOrder(page, uniqueWait, 'ordem exibida = ordem crescente de espera da API');
 
   // "Aberto agora": filtro enviado ao servidor; só há casas abertas na lista
   const openReq = page.waitForRequest(r => r.url().includes('/api/restaurants?') && r.url().includes('openNow=true'));

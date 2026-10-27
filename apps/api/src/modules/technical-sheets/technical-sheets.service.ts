@@ -6,6 +6,20 @@ import { Prisma } from '../../generated/prisma/client.js';
 import type { CreateIngredientDto, UpdateIngredientDto, UpsertTechnicalSheetDto } from './dto/technical-sheets.dto.js';
 import { calculateSheetCost } from './sheet-cost.js';
 
+export const toIngredientDto = (
+  ingredient: { id: string; name: string; unit: IngredientDto['unit']; unitCost: Prisma.Decimal; stockQuantity: Prisma.Decimal | null; minStockQuantity: Prisma.Decimal },
+  usedInSheets: number,
+): IngredientDto => ({
+  id: ingredient.id,
+  name: ingredient.name,
+  unit: ingredient.unit,
+  unitCost: ingredient.unitCost.toFixed(4),
+  usedInSheets,
+  stockQuantity: ingredient.stockQuantity?.toFixed(4) ?? null,
+  minStockQuantity: ingredient.minStockQuantity.toFixed(4),
+  lowStock: ingredient.stockQuantity !== null && ingredient.stockQuantity.lessThanOrEqualTo(ingredient.minStockQuantity),
+});
+
 const SHEET_INCLUDE = {
   menuItem: { select: { name: true, priceCents: true } },
   items: {
@@ -57,7 +71,7 @@ export class TechnicalSheetsService {
       orderBy: { name: 'asc' },
       include: { _count: { select: { sheetItems: true } } },
     });
-    return ingredients.map(({ id, name, unit, unitCost, _count }) => ({ id, name, unit, unitCost: unitCost.toFixed(4), usedInSheets: _count.sheetItems }));
+    return ingredients.map(row => toIngredientDto(row, row._count.sheetItems));
   }
 
   async createIngredient(establishmentId: string, dto: CreateIngredientDto): Promise<IngredientDto> {
@@ -65,7 +79,7 @@ export class TechnicalSheetsService {
       const ingredient = await this.prisma.ingredient.create({
         data: { establishmentId, name: dto.name, unit: dto.unit, unitCost: new Prisma.Decimal(String(dto.unitCost)) },
       });
-      return { id: ingredient.id, name: ingredient.name, unit: ingredient.unit, unitCost: ingredient.unitCost.toFixed(4), usedInSheets: 0 };
+      return toIngredientDto(ingredient, 0);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw duplicateIngredient();
       throw error;
@@ -81,7 +95,7 @@ export class TechnicalSheetsService {
         data: { name: dto.name, unit: dto.unit, ...(dto.unitCost !== undefined && { unitCost: new Prisma.Decimal(String(dto.unitCost)) }) },
         include: { _count: { select: { sheetItems: true } } },
       });
-      return { id: ingredient.id, name: ingredient.name, unit: ingredient.unit, unitCost: ingredient.unitCost.toFixed(4), usedInSheets: ingredient._count.sheetItems };
+      return toIngredientDto(ingredient, ingredient._count.sheetItems);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw duplicateIngredient();
       throw error;

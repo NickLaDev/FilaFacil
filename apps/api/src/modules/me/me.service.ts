@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isValidEmail, isValidPhone, normalizeEmail, normalizePhone, type AddressDto, type MeResponse } from '@filafacil/shared';
+import { isValidEmail, isValidPhone, normalizeEmail, normalizePhone, type AddressDto, type MeResponse, type OnboardingStateDto } from '@filafacil/shared';
 import { badRequest, conflict, notFound, unprocessable } from '../../common/http/app-error.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import type { CreateAddressDto, UpdateAddressDto, UpdateProfileDto } from './dto/me.dto.js';
@@ -102,5 +102,17 @@ export class MeService {
 
   private clearDefault(tx: PrismaTx, userId: string) {
     return tx.userAddress.updateMany({ where: { userId, isDefault: true }, data: { isDefault: false } });
+  }
+
+  /** Ficha 07: onboarding lembrado por conta (vale em qualquer aparelho). */
+  async onboarding(userId: string): Promise<OnboardingStateDto> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { onboardingCompletedAt: true } });
+    return { completed: user.onboardingCompletedAt !== null, completedAt: user.onboardingCompletedAt?.toISOString() ?? null };
+  }
+
+  /** Concluir ou pular marca a conta; repetir não altera a data original (idempotente). */
+  async completeOnboarding(userId: string): Promise<OnboardingStateDto> {
+    await this.prisma.user.updateMany({ where: { id: userId, onboardingCompletedAt: null }, data: { onboardingCompletedAt: new Date() } });
+    return this.onboarding(userId);
   }
 }

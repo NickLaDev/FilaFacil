@@ -3,7 +3,8 @@ import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { CurrentAuth } from '../auth/auth.decorators.js';
 import type { AuthContext } from '../auth/auth.types.js';
-import { CreateAddressDto, UpdateAddressDto, UpdateProfileDto } from './dto/me.dto.js';
+import type { OnboardingStateDto } from '@filafacil/shared';
+import { CompleteOnboardingDto, CreateAddressDto, UpdateAddressDto, UpdateProfileDto } from './dto/me.dto.js';
 import { AddressResponseDto, MeResponseDto } from './dto/me-responses.dto.js';
 import { MeService } from './me.service.js';
 
@@ -25,6 +26,20 @@ export class MeController {
   @ApiErrors(400, 409, 422)
   update(@CurrentAuth() auth: AuthContext, @Body() dto: UpdateProfileDto): Promise<MeResponseDto> {
     return this.me.updateProfile(auth.userId, dto);
+  }
+
+  @Get('onboarding')
+  @ApiOperation({ summary: 'Se a conta já viu (ou pulou) o onboarding do primeiro acesso (ficha 07)' })
+  onboarding(@CurrentAuth() auth: AuthContext): Promise<OnboardingStateDto> {
+    return this.me.onboarding(auth.userId);
+  }
+
+  @Post('onboarding/complete')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Marca o onboarding como concluído ou pulado; idempotente' })
+  completeOnboarding(@CurrentAuth() auth: AuthContext, @Body() dto: CompleteOnboardingDto): Promise<OnboardingStateDto> {
+    void dto; // `skipped` é só informativo: concluir e pular marcam a conta do mesmo jeito
+    return this.me.completeOnboarding(auth.userId);
   }
 
   @Get('addresses')

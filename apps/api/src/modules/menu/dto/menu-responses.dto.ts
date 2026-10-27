@@ -11,6 +11,8 @@ export class ManagedMenuItemDto implements ManagedMenuItem {
   imageUrl!: string | null;
   available!: boolean;
   highlighted!: boolean;
+  stationId!: string | null;
+  stationName!: string | null;
   position!: number;
   updatedAt!: string;
 }

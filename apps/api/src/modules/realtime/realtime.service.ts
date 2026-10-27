@@ -64,6 +64,47 @@ export class RealtimeService {
     this.emit(rooms.user(userId), REALTIME_EVENTS.orderUpdated, payload);
     this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.orderUpdated, payload);
     this.tablesUpdated(establishmentId);
+    this.queueUpdated(establishmentId);
+  }
+
+  /** A fila mudou: clientes na sala pública do restaurante recalculam a posição (sem dados privados no payload). */
+  queueUpdated(establishmentId: string) {
+    this.emit(rooms.restaurant(establishmentId), REALTIME_EVENTS.queueUpdated, { establishmentId });
+  }
+
+  /** Pedido pronto: só o dono recebe (toast/banner in-app). */
+  orderReady(userId: string, establishmentId: string, orderId: string) {
+    this.emit(rooms.user(userId), REALTIME_EVENTS.orderReady, { establishmentId, orderId });
+  }
+
+  alertsUpdated(establishmentId: string) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.alertsUpdated, { establishmentId });
+  }
+
+  printersUpdated(establishmentId: string) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.printersUpdated, { establishmentId });
+  }
+
+  tableCallUpdated(establishmentId: string, tableId: string, callId: string, userId?: string | null) {
+    const payload = { establishmentId, tableId, callId };
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.tableCallUpdated, payload);
+    if (userId) this.emit(rooms.user(userId), REALTIME_EVENTS.tableCallUpdated, payload);
+  }
+
+  tabsUpdated(establishmentId: string, tabId?: string) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.tabsUpdated, { establishmentId, tabId });
+  }
+
+  shiftUpdated(establishmentId: string) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.shiftUpdated, { establishmentId });
+  }
+
+  stockUpdated(establishmentId: string) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.stockUpdated, { establishmentId });
+  }
+
+  loyaltyUpdated(userId: string) {
+    this.emit(rooms.user(userId), REALTIME_EVENTS.loyaltyUpdated, {});
   }
 
   /** Papel, permissões ou vínculos do usuário mudaram: as conexões dele saem das salas da equipe na hora. */

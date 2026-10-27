@@ -301,4 +301,4 @@ pnpm test
 Somente funcionalidades da Sprint 2 ou que dependem de credencial externa:
 
 - Nada das fichas 16, 44, 45, 46, 47, 53, 59, 60 e 61 é simulado: todas têm backend (ver `docs/decisoes.md`, Sprint 2 blocos 2 e 3). Falta validar em aparelho real a biometria (WebAuthn) e a entrega real de e-mail/SMS.
-- Google/Apple, SMS e o pagamento real (Mercado Pago) dependem de credenciais externas (ver `.env.example`). Para demonstração existe o **pagamento simulado** (seção abaixo), que não precisa de credencial. Com `PAYMENT_PROVIDER=none` o pagamento responde 503. SMS real ainda não tem provider; o e-mail real usa SMTP (`EMAIL_PROVIDER=smtp`).
+- Google/Apple, SMS e o pagamento real (Mercado Pago) dependem de credenciais externas (ver `.env.example`). Para demonstração existe o **pagamento simulado** (seção abaixo), que não precisa de credencial. Com `PAYMENT_PROVIDER=none` o pagamento responde 503. SMS real usa Infobip ou Twilio (`SMS_PROVIDER=infobip|twilio`); o e-mail real usa SMTP (`EMAIL_PROVIDER=smtp`).

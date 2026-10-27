@@ -1,8 +1,8 @@
 import type { ElementType } from 'react';
-import { BookOpen, FileText, Map as MapIcon, QrCode, Tag, Users } from 'lucide-react';
+import { BookOpen, ChefHat, Clock, FileText, LayoutDashboard, Map as MapIcon, QrCode, Tag, Users } from 'lucide-react';
 import type { PlanFeature } from '@filafacil/shared';
 
-export type ManagerSection = 'floor-plan' | 'waitlist' | 'qrcodes' | 'menu' | 'promotions' | 'recipes';
+export type ManagerSection = 'floor-plan' | 'waitlist' | 'qrcodes' | 'menu' | 'promotions' | 'recipes' | 'kitchen' | 'shift' | 'dashboard';
 
 interface SectionDefinition {
   id: ManagerSection;
@@ -17,7 +17,13 @@ export const NAV_GROUPS: { label: string; items: SectionDefinition[] }[] = [
       { id: 'floor-plan', icon: MapIcon, label: 'Planta do salão' },
       { id: 'waitlist', icon: Users, label: 'Fila de espera' },
       { id: 'qrcodes', icon: QrCode, label: 'QR Codes' },
+      { id: 'kitchen', icon: ChefHat, label: 'Cozinha' },
+      { id: 'shift', icon: Clock, label: 'Turno' },
     ],
+  },
+  {
+    label: 'Gestão',
+    items: [{ id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' }],
   },
   {
     label: 'Catálogo',

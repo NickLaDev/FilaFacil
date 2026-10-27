@@ -296,8 +296,10 @@ test('C6 · mesclar mesas (gestor): unidade única no mapa, capacidade somada, c
   const api = await clientApi();
   const o1 = await createOrder(api, { establishmentId: E, tableId: a.id, items: [{ menuItemId: item('Cerveja IPA 600ml').id, quantity: 1 }] });
   const o2 = await createOrder(api, { establishmentId: E, tableId: b.id, items: [{ menuItemId: item('X-Burger').id, quantity: 1 }] });
-  await payApproved(api, o1.body.id, o1.body.totalCents);
-  await payApproved(api, o2.body.id, o2.body.totalCents);
+  for (const o of [o1, o2]) {
+    const paid = await payApproved(api, o.body.id, o.body.totalCents);
+    expect(paid.status, `pagamento do pedido ${o.body.number}: ${JSON.stringify(paid.body).slice(0, 200)}`).toBeLessThan(300);
+  }
   await expect(staff.getByRole('button', { name: new RegExp(`^${g.label.replace('+', '\\+')}: Ocupada`) })).toBeVisible({ timeout: 5000 });
   const check = (await manager.get(`establishments/${E}/table-checks/${a.id}`)).body;
   expect(check.totalCents).toBe(o1.body.totalCents + o2.body.totalCents);

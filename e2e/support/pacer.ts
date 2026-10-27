@@ -7,13 +7,14 @@ import { ROOT } from './env';
  * as chamadas de autenticação são espaçadas: no máximo (limite - 1) por janela de 60 s, controladas em arquivo
  * (sobrevive a troca de worker). Os testes que PROVAM o rate limit usam chamadas diretas, sem o pacer.
  */
-const LIMITS: Record<string, number> = { login: 10, register: 5, otp: 5, 'otp-verify': 10, 'password-reset': 5, 'password-reset-confirm': 10, 'verify-contact': 5, 'verify-contact-confirm': 10, refresh: 30 };
+const LIMITS: Record<string, number> = { login: 10, register: 5, otp: 5, 'otp-verify': 10, 'password-reset': 5, 'password-reset-confirm': 10, 'verify-contact': 5, 'verify-contact-confirm': 10, refresh: 30, payment: 12 };
 const FILE = path.join(ROOT, '.e2e/.pacer.json');
 const WINDOW = 60_000;
 
 export function bucketFor(apiPath: string): string | null {
   const p = apiPath.replace(/^\/?(api\/)?/, '');
   const map: [RegExp, string][] = [
+    [/^orders\/[0-9a-f-]{36}\/payments$/, 'payment'], // pagamento: 12/min por usuário (todas as contas do E2E contam juntas: conservador)
     [/^auth\/login$/, 'login'],
     [/^auth\/register$/, 'register'],
     [/^auth\/otp$/, 'otp'],
@@ -53,3 +54,12 @@ export async function pace(bucket: string) {
 
 /** Espaça uma ação de UI que dispara um endpoint limitado (ex.: clicar "Entrar"). */
 export const paceUi = (bucket: keyof typeof LIMITS) => pace(bucket as string);
+
+/** Registra no contador uma chamada que NÃO esperou o pacer (raw), para que o próximo `pace` leve em conta o consumo real do limite da API. */
+export function note(bucket: string) {
+  const now = Date.now();
+  const state = load();
+  state[bucket] = [...(state[bucket] ?? []).filter(t => now - t < WINDOW), now];
+  mkdirSync(path.dirname(FILE), { recursive: true });
+  writeFileSync(FILE, JSON.stringify(state));
+}

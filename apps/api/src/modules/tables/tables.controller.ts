@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { CurrentEstablishment, EstablishmentScoped, RequireAccess } from '../access/access.decorators.js';
@@ -60,8 +60,26 @@ export class TablesController {
     return this.tables.cancelReservation(establishment.id, tableId, reservationId);
   }
 
+  // Chamados não exigem o recurso `floor_plan` do plano: o cliente pode chamar enquanto a mesa existir, então a equipe
+  // sempre precisa conseguir ver e atender (senão um plano que perde a planta deixaria chamados sem resposta).
+  @Get('table-calls')
+  @RequireAccess(['tables.view'])
+  @ApiOperation({ summary: 'Chamados de atendimento abertos (ficha 18)' })
+  listCalls(@CurrentEstablishment() establishment: EstablishmentContext) {
+    return this.tables.listOpenCalls(establishment.id);
+  }
+
+  @Post('table-calls/:callId/resolve')
+  @HttpCode(204)
+  @RequireAccess(['tables.view'])
+  @ApiOperation({ summary: 'Marca um chamado como atendido' })
+  @ApiErrors(404)
+  async resolveCall(@CurrentEstablishment() establishment: EstablishmentContext, @CurrentAuth() auth: AuthContext, @id('callId') callId: string) {
+    await this.tables.resolveCall(establishment.id, callId, auth.userId);
+  }
+
   @Post('tables/:tableId/calls/resolve')
-  @RequireAccess(['tables.view'], 'floor_plan')
+  @RequireAccess(['tables.view'])
   @ApiOperation({ summary: 'Marca o chamado de atendimento da mesa como atendido' })
   @ApiErrors(404)
   resolveCalls(@CurrentEstablishment() establishment: EstablishmentContext, @CurrentAuth() auth: AuthContext, @id('tableId') tableId: string) {

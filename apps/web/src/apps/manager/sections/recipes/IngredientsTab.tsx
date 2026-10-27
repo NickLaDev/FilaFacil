@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Edit3, Package, Plus, Trash2 } from 'lucide-react';
+import { Boxes, Edit3, Package, Plus, Trash2 } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { useAsyncAction } from '@/lib/useAsyncAction';
 import { deleteIngredient, type IngredientView } from '@/services/recipeService';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import StockModal from './StockModal';
 import IngredientFormModal from './IngredientFormModal';
 import { formatUnitCost } from './recipeFormat';
 
@@ -16,6 +17,7 @@ interface Props {
 export default function IngredientsTab({ establishmentId, ingredients, notify }: Props) {
   const [editing, setEditing] = useState<IngredientView | 'new' | null>(null);
   const [deleting, setDeleting] = useState<IngredientView | null>(null);
+  const [stocking, setStocking] = useState<IngredientView | null>(null);
   const { run } = useAsyncAction(notify);
 
   const usageCount = (ingredientId: string) => ingredients.find(i => i.id === ingredientId)?.usedInSheets ?? 0;
@@ -36,10 +38,10 @@ export default function IngredientsTab({ establishmentId, ingredients, notify }:
         </div>
       ) : (
         <div className="bg-card border border-border rounded-xl overflow-x-auto">
-          <table className="w-full min-w-[560px]">
+          <table className="w-full min-w-[680px]">
             <thead>
               <tr className="border-b border-border bg-muted/30">
-                {['Insumo', 'Unidade', 'Custo unitário', 'Usado em', 'Ações'].map(header => (
+                {['Insumo', 'Unidade', 'Custo unitário', 'Estoque', 'Usado em', 'Ações'].map(header => (
                   <th key={header} className="text-left text-xs font-semibold text-muted-foreground px-4 py-3">{header}</th>
                 ))}
               </tr>
@@ -54,9 +56,23 @@ export default function IngredientsTab({ establishmentId, ingredients, notify }:
                     <td className="px-4 py-3 text-sm text-foreground">
                       {formatUnitCost(ingredient.unitCost)} <span className="text-muted-foreground">/ {ingredient.unit}</span>
                     </td>
+                    <td className="px-4 py-3 text-sm" data-testid={`stock-${ingredient.name}`}>
+                      {ingredient.stockQuantity === null ? (
+                        <span className="text-muted-foreground">Sem controle</span>
+                      ) : (
+                        <span className={ingredient.lowStock ? 'text-error font-bold' : 'text-foreground'}>
+                          {ingredient.stockQuantity} {ingredient.unit}
+                          <span className="text-muted-foreground font-normal"> · mín. {ingredient.minStockQuantity}</span>
+                          {ingredient.lowStock && ' · Estoque baixo'}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{usage === 0 ? '—' : `${usage} ficha${usage > 1 ? 's' : ''}`}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
+                        <button onClick={() => setStocking(ingredient)} aria-label={`Estoque de ${ingredient.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground">
+                          <Boxes size={14} />
+                        </button>
                         <button onClick={() => setEditing(ingredient)} aria-label={`Editar ${ingredient.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground">
                           <Edit3 size={14} />
                         </button>
@@ -81,6 +97,7 @@ export default function IngredientsTab({ establishmentId, ingredients, notify }:
           notify={notify}
         />
       )}
+      {stocking && <StockModal establishmentId={establishmentId} ingredient={stocking} notify={notify} onClose={() => setStocking(null)} />}
       {deleting && (
         <ConfirmDialog
           title="Excluir insumo"

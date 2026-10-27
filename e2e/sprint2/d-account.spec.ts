@@ -229,8 +229,14 @@ test('D3b · limite de tentativas do código de recuperação (5) e código reen
   expect((await anon.post('auth/login', { email: acc.email, password: 'NovaSenha123' })).status).toBe(401);
   // reenvio imediato é barrado pelo intervalo mínimo (42 s)
   // Contrato da API: pedir de novo dentro do intervalo mínimo (42 s) responde 200 UNIFORME (não revela a conta) e NÃO envia novo código.
+  // As tentativas acima podem demorar mais que o intervalo (máquina carregada); o pedido de "preparo" garante que o cooldown está ativo
+  // (se enviou, reinicia o intervalo; se não, ele já estava ativo). O mark é tomado depois dele.
+  expect((await anon.post('auth/password-reset', { channel: 'email', destination: acc.email })).status).toBe(200);
+  await new Promise(r => setTimeout(r, 1500)); // o log do envio do "preparo" pode chegar ao arquivo depois da resposta
   const markAgain = otpMark();
-  const again = await anon.post('auth/password-reset', { channel: 'email', destination: acc.email });
+  // `raw`: o pacer pode esperar quase 60 s por uma vaga e, nesse tempo, o intervalo de 42 s expira de verdade (o reenvio seria legítimo).
+  // Aqui o que se prova é o cooldown da API, então a chamada precisa sair logo após o "preparo".
+  const again = await anon.post('auth/password-reset', { channel: 'email', destination: acc.email }, { raw: true });
   expect(again.status).toBe(200);
   await new Promise(r => setTimeout(r, 1500));
   expect(logSince(markAgain).filter(l => l.includes('[E-mail dev]') && l.includes('redefinir')), 'nenhum novo e-mail de recuperação dentro do intervalo').toHaveLength(0);

@@ -17,6 +17,10 @@ import MenuSection from './sections/menu/MenuSection';
 import PromotionsSection from './sections/promotions/PromotionsSection';
 import QRCodesSection from './sections/QRCodesSection';
 import RecipesSection from './sections/recipes/RecipesSection';
+import KitchenSection from './sections/kitchen/KitchenSection';
+import ShiftSection from './sections/shift/ShiftSection';
+import DashboardSection from './sections/dashboard/DashboardSection';
+import AlertsBanner from '@/components/layout/AlertsBanner';
 import WaitlistSection from './sections/waitlist/WaitlistSection';
 import type { ManagerSectionProps, ManagerUnit } from './types';
 
@@ -115,11 +119,15 @@ function UnitSection({ section, sectionProps, onOpenFloorPlan }: UnitSectionProp
 
   return (
     <>
+      <AlertsBanner establishmentId={sectionProps.unit.id} notify={sectionProps.notify} />
       {section === 'menu' && <MenuSection {...sectionProps} />}
       {section === 'promotions' && <PromotionsSection {...sectionProps} />}
       {section === 'recipes' && <RecipesSection {...sectionProps} />}
       {section === 'floor-plan' && <FloorPlanSection {...sectionProps} />}
       {section === 'waitlist' && <WaitlistSection {...sectionProps} />}
+      {section === 'kitchen' && <KitchenSection {...sectionProps} />}
+      {section === 'shift' && <ShiftSection {...sectionProps} />}
+      {section === 'dashboard' && <DashboardSection {...sectionProps} />}
       {section === 'qrcodes' && <QRCodesSection {...sectionProps} onOpenFloorPlan={onOpenFloorPlan} />}
     </>
   );

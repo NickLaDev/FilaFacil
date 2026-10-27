@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { paceUi } from './pacer';
 import { brlRe } from './ui';
 
 /** No cardápio do cliente: abre o item (categoria atual ou busca), ajusta quantidade e adiciona ao carrinho. */
@@ -27,5 +28,6 @@ export async function payWithCard(page: Page, scenario: Scenario = 'sim_approved
   await page.getByRole('button', { name: kind === 'credit' ? /Cartão de crédito/ : /Cartão de débito/ }).click();
   const label = { sim_approved: 'Pagamento aprovado', sim_refused: 'Pagamento recusado', sim_error: 'Falha de processamento' }[scenario];
   await page.getByRole('radio', { name: new RegExp(label) }).check();
+  await paceUi('payment');
   await page.getByRole('button', { name: /^Pagar com/ }).click();
 }

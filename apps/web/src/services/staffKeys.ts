@@ -13,4 +13,12 @@ export const staffKeys = {
   ranking: (establishmentId: string) => ['staff', establishmentId, 'menu-ranking'] as const,
   waitlist: (establishmentId: string) => ['staff', establishmentId, 'waitlist'] as const,
   orders: (establishmentId: string) => ['staff', establishmentId, 'orders'] as const,
+  queue: (establishmentId: string) => ['staff', establishmentId, 'queue'] as const,
+  stations: (establishmentId: string) => ['staff', establishmentId, 'stations'] as const,
+  printers: (establishmentId: string) => ['staff', establishmentId, 'printers'] as const,
+  alerts: (establishmentId: string) => ['staff', establishmentId, 'alerts'] as const,
+  shift: (establishmentId: string) => ['staff', establishmentId, 'shift'] as const,
+  tabs: (establishmentId: string) => ['staff', establishmentId, 'tabs'] as const,
+  calls: (establishmentId: string) => ['staff', establishmentId, 'table-calls'] as const,
+  dashboard: (establishmentId: string) => ['staff', establishmentId, 'dashboard'] as const,
 };

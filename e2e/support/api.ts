@@ -1,6 +1,6 @@
 import { expect, request, type APIRequestContext, type APIResponse, type BrowserContext } from '@playwright/test';
 import { API_URL, CLIENT_HEADER, PASSWORD, SEED } from './env';
-import { bucketFor, pace } from './pacer';
+import { bucketFor, note, pace } from './pacer';
 
 const SESSION_REUSE_MS = 7 * 60_000;
 const apiCache = new Map<string, { api: Api; at: number }>();
@@ -66,8 +66,11 @@ export class Api {
   get = (path: string, params?: Record<string, string | number | boolean>) => this.wrap(() => this.ctx.get(this.abs(path), { params, headers: CLIENT_HEADER }));
   /** `raw: true` ignora o pacer (usado só por testes que provam o rate limit). */
   post = async (path: string, data?: unknown, opts: { raw?: boolean } = {}) => {
-    const bucket = opts.raw ? null : bucketFor(path);
-    if (bucket) await pace(bucket);
+    const bucket = bucketFor(path);
+    if (bucket) {
+      if (opts.raw) note(bucket); // sem esperar, mas o consumo do limite da API entra na conta
+      else await pace(bucket);
+    }
     return this.wrap(() => this.ctx.post(this.abs(path), { data, headers: CLIENT_HEADER }));
   };
   put = (path: string, data?: unknown) => this.wrap(() => this.ctx.put(this.abs(path), { data, headers: CLIENT_HEADER }));
@@ -77,7 +80,7 @@ export class Api {
 }
 
 /** Autentica o contexto do navegador pela API (cookies HttpOnly ficam no contexto). Os testes de login usam a UI. */
-export async function loginContext(context: BrowserContext, email: string, password = PASSWORD, opts: { fresh?: boolean } = {}) {
+export async function loginContext(context: BrowserContext, email: string, password = PASSWORD, opts: { fresh?: boolean; keepOnboarding?: boolean } = {}) {
   const key = `${email}:${password}`;
   const hit = cookieCache.get(key);
   if (!opts.fresh && hit && Date.now() - hit.at < SESSION_REUSE_MS) {
@@ -91,6 +94,8 @@ export async function loginContext(context: BrowserContext, email: string, passw
   };
   const r = await loginWithRetry(doLogin);
   if (r.status !== 200) throw new Error(`login ${email} falhou: ${r.status} ${JSON.stringify(r.body)}`);
+  // Ficha 07: o onboarding só aparece no primeiro acesso da conta; os demais testes não devem esbarrar nele.
+  if (!opts.keepOnboarding) await context.request.post(`${API_URL}/me/onboarding/complete`, { data: { skipped: true }, headers: CLIENT_HEADER }).catch(() => null);
   if (!opts.fresh) cookieCache.set(key, { cookies: (await context.cookies()).filter(c => c.name.startsWith('ff_')), at: Date.now() });
 }
 

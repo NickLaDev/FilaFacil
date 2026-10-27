@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, MaxLength, Min, ValidateNested } from 'class-validator';
-import { MAX_ORDER_LINES, MAX_ORDER_LINE_QUANTITY, ORDER_STATUSES, PAYMENT_METHODS, type OrderStatus, type PaymentMethod } from '@filafacil/shared';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
+import { ESTIMATE_MAX_MINUTES, ESTIMATE_MIN_MINUTES, MAX_ORDER_LINES, MAX_ORDER_LINE_QUANTITY, ORDER_STATUSES, PAYMENT_METHODS, type OrderStatus, type PaymentMethod } from '@filafacil/shared';
 import { PageQueryDto } from '../../../common/pagination/page-query.dto.js';
 import { Trim } from '../../../common/validation/transforms.js';
 
@@ -38,6 +38,13 @@ export class CreateOrderDto {
   @IsInt()
   @Min(0)
   expectedTotalCents?: number;
+
+  /** Ficha 14: pontos FilaZero Club a resgatar (múltiplo de 100). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  redeemPoints?: number;
 
   @IsArray()
   @ArrayMinSize(1)
@@ -81,4 +88,31 @@ export class StaffOrdersQueryDto extends PageQueryDto {
   @IsOptional()
   @IsIn(ORDER_STATUSES)
   status?: OrderStatus;
+}
+
+export class QueueQueryDto {
+  /** Filtro de status da fila; `received` = pedidos atribuídos a comanda. */
+  @IsOptional()
+  @IsIn(['received', 'paid', 'preparing', 'ready'])
+  status?: 'received' | 'paid' | 'preparing' | 'ready';
+
+  /** Id da estação ou `general` (itens sem estação). */
+  @IsOptional()
+  @IsString()
+  @Length(1, 36)
+  stationId?: string;
+}
+
+export class MarkStationReadyDto {
+  /** Estação a concluir; null = "Geral" (itens sem estação). */
+  @ValidateIf((_, value) => value !== null)
+  @IsUUID()
+  stationId!: string | null;
+}
+
+export class UpdateEstimateDto {
+  @IsInt()
+  @Min(ESTIMATE_MIN_MINUTES)
+  @Max(ESTIMATE_MAX_MINUTES)
+  minutes!: number;
 }

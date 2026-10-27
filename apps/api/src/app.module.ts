@@ -10,10 +10,13 @@ import { AccessModule } from './modules/access/access.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { AccessTokenGuard } from './modules/auth/access-token.guard.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { EstablishmentsModule } from './modules/establishments/establishments.module.js';
 import { FavoritesModule } from './modules/favorites/favorites.module.js';
 import { FloorPlanModule } from './modules/floor-plan/floor-plan.module.js';
 import { HealthController } from './modules/health/health.controller.js';
+import { KitchenModule } from './modules/kitchen/kitchen.module.js';
+import { LoyaltyModule } from './modules/loyalty/loyalty.module.js';
 import { MeModule } from './modules/me/me.module.js';
 import { MenuModule } from './modules/menu/menu.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
@@ -22,7 +25,10 @@ import { PromotionsModule } from './modules/promotions/promotions.module.js';
 import { RealtimeGatewayModule } from './modules/realtime/realtime-gateway.module.js';
 import { RealtimeModule } from './modules/realtime/realtime.module.js';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module.js';
+import { ShiftsModule } from './modules/shifts/shifts.module.js';
+import { StockModule } from './modules/stock/stock.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
+import { TabsModule } from './modules/tabs/tabs.module.js';
 import { TablesModule } from './modules/tables/tables.module.js';
 import { TechnicalSheetsModule } from './modules/technical-sheets/technical-sheets.module.js';
 import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
@@ -62,6 +68,12 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     FloorPlanModule,
     WaitlistModule,
     TablesModule,
+    TabsModule,
+    DashboardModule,
+    KitchenModule,
+    ShiftsModule,
+    LoyaltyModule,
+    StockModule,
     OrdersModule,
     AdminModule,
   ],

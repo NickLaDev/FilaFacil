@@ -5,7 +5,7 @@ import { createEmailSender, createSmsSender, EmailSender, SmsSender } from './me
 @Global()
 @Module({
   providers: [
-    { provide: SmsSender, inject: [AppConfig], useFactory: (config: AppConfig) => createSmsSender(config.env.SMS_PROVIDER) },
+    { provide: SmsSender, inject: [AppConfig], useFactory: (config: AppConfig) => createSmsSender(config.env) },
     { provide: EmailSender, inject: [AppConfig], useFactory: (config: AppConfig) => createEmailSender(config.env) },
   ],
   exports: [SmsSender, EmailSender],

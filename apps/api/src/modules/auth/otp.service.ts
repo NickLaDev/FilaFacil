@@ -4,10 +4,11 @@ import { randomInt, randomUUID } from 'node:crypto';
 import type { OtpChallengeResponse, OtpChannel } from '@filafacil/shared';
 import { AppConfig } from '../../config/app-config.js';
 import { hmacSha256Hex, safeEqualHex } from '../../common/crypto/hashing.js';
-import { badRequest, serviceUnavailable, tooManyRequests } from '../../common/http/app-error.js';
+import { AppError, badRequest, serviceUnavailable, tooManyRequests } from '../../common/http/app-error.js';
 import { maskEmail, maskPhone } from '../../common/masking.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { EmailSender, SmsSender, type MessageSender } from '../notifications/message-senders.js';
+import { deliveryErrorCode } from '../notifications/delivery-error.js';
 import { BRAND_NAME } from '../../common/brand.js';
 
 export const OTP_LENGTH = 6;
@@ -101,7 +102,13 @@ export class OtpService {
 
     const destinationMasked = channel === 'phone' ? maskPhone(destination) : maskEmail(destination);
     const reason = OTP_REASONS[purpose];
-    await sender.send(destination, destinationMasked, `${BRAND_NAME}: seu ${reason} é ${code}. Ele expira em 10 minutos. Não compartilhe.`);
+    try {
+      await sender.send(destination, destinationMasked, `${BRAND_NAME}: seu ${reason} é ${code}. Ele expira em 10 minutos. Não compartilhe.`, { subject: `${BRAND_NAME}: seu ${reason}` });
+    } catch (error) {
+      // Falha do provedor nunca vira sucesso: o código não chegou, então o desafio é descartado e o cliente é avisado.
+      await this.prisma.otpChallenge.deleteMany({ where: { id } });
+      throw new AppError(502, 'OTP_DELIVERY_FAILED', 'Não conseguimos enviar o código agora. Tente novamente em instantes.', [{ field: 'delivery', message: deliveryErrorCode(error) }]);
+    }
 
     return {
       challengeId: challenge.id,

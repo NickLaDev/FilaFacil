@@ -10,7 +10,7 @@ export type ClientScreen =
   | 'menu' | 'item-detail' | 'cart'
   | 'payment' | 'order-confirmed'
   | 'orders' | 'reservations' | 'order-tracking' | 'receipt'
-  | 'profile' | 'edit-profile' | 'addresses' | 'account-security' | 'delete-account';
+  | 'profile' | 'club' | 'edit-profile' | 'addresses' | 'account-security' | 'delete-account';
 
 /** Mesa vinculada pelo QR Code: todo pedido feito nela já sai associado (ficha 02). */
 export interface TableContext {

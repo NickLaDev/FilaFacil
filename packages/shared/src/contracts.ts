@@ -40,6 +40,8 @@ export interface AuthUser {
   phoneVerified: boolean;
   /** A conta tem senha (define se a exclusão pede senha ou código). */
   hasPassword: boolean;
+  /** Ficha 07: null = ainda não viu (ou pulou) o onboarding. */
+  onboardingCompletedAt: string | null;
   permissions: Permission[];
   createdAt: string;
 }
@@ -179,6 +181,9 @@ export interface ManagedMenuItem {
   available: boolean;
   /** Destaque manual do gestor (ficha 46). */
   highlighted: boolean;
+  /** Ficha 24: estação da cozinha (null = "Geral"). */
+  stationId: string | null;
+  stationName: string | null;
   position: number;
   updatedAt: string;
 }
@@ -213,6 +218,11 @@ export interface IngredientDto {
   unit: IngredientUnit;
   unitCost: string;
   usedInSheets: number;
+  /** Ficha 50: null = sem controle de estoque. */
+  stockQuantity: string | null;
+  minStockQuantity: string;
+  /** Controlado e com estoque ≤ mínimo. */
+  lowStock: boolean;
 }
 
 export interface TechnicalSheetLineDto {
@@ -441,6 +451,24 @@ export const REALTIME_EVENTS = {
   orderUpdated: 'order.updated',
   /** Qualquer mudança no mapa de mesas (chamado, ocupação, pagamento, reserva, mescla): a equipe recarrega o mapa. */
   tablesUpdated: 'tables.updated',
+  /** Pedido ficou pronto (só para o dono): toast/banner in-app (ficha 05). */
+  orderReady: 'order.ready',
+  /** A fila de pedidos da casa mudou: clientes na sala do restaurante recalculam a posição (ficha 51). */
+  queueUpdated: 'queue.updated',
+  /** Alerta da equipe aberto ou resolvido (impressora offline, estoque baixo). */
+  alertsUpdated: 'alerts.updated',
+  /** Estado/heartbeat de impressoras mudou (ficha 26). */
+  printersUpdated: 'printers.updated',
+  /** Chamado de atendimento criado ou resolvido: equipe e dono do chamado (ficha 18). */
+  tableCallUpdated: 'table-call.updated',
+  /** Comanda aberta, alterada ou fechada (fichas 17/22). */
+  tabsUpdated: 'tabs.updated',
+  /** Turno aberto ou fechado (ficha 25). */
+  shiftUpdated: 'shift.updated',
+  /** Estoque mudou (ficha 50). */
+  stockUpdated: 'stock.updated',
+  /** Saldo FilaZero Club mudou (só para o dono, ficha 14). */
+  loyaltyUpdated: 'loyalty.updated',
 } as const;
 
 export type RealtimeEvent = (typeof REALTIME_EVENTS)[keyof typeof REALTIME_EVENTS];
@@ -454,6 +482,9 @@ export interface RealtimeSubscribeRequest {
 export interface RealtimePayload {
   establishmentId?: string;
   orderId?: string;
+  tableId?: string;
+  callId?: string;
+  tabId?: string;
   /** Só em `realtime.ready`: a conexão tem sessão válida? */
   authenticated?: boolean;
   reason?: string;
@@ -496,6 +527,8 @@ export interface CreateOrderRequest {
   clientRequestId: string;
   /** Total exibido ao cliente; se o servidor calcular outro valor, responde PRICE_CHANGED. */
   expectedTotalCents?: number;
+  /** Ficha 14: pontos a resgatar (múltiplo de 100; 100 pts = R$ 5). O total enviado em `expectedTotalCents` já é o líquido. */
+  redeemPoints?: number;
   items: { menuItemId: string; quantity: number; notes?: string }[];
 }
 
@@ -505,6 +538,10 @@ export interface OrderItemDto {
   quantity: number;
   unitPriceCents: number;
   notes: string;
+  /** Ficha 24 (visível à equipe; cliente recebe null). */
+  stationId?: string | null;
+  stationName?: string | null;
+  readyAt?: string | null;
 }
 
 export interface PixPaymentDto {
@@ -546,13 +583,22 @@ export interface OrderDto {
   tableId: string | null;
   tableLabel: string | null;
   status: OrderStatus;
+  /** Valor líquido a pagar (já com o desconto de pontos). */
   totalCents: number;
+  discountCents: number;
+  redeemedPoints: number;
   items: OrderItemDto[];
   pickupPoint: string;
   /** Só aparece quando o pedido está pronto ou entregue. */
   pickupCode: string | null;
   /** Estimativa de preparo informada pela casa; some quando o pedido está pronto. */
   estimatedMinutes: number | null;
+  /** Ficha 63: o gestor ajustou o tempo deste pedido. */
+  estimateAdjusted: boolean;
+  /** Ficha 10: o cliente ainda pode cancelar (received/paid). */
+  cancellable: boolean;
+  /** Comanda a que o pedido foi atribuído (pagamento posterior). */
+  tabId: string | null;
   payment: PaymentDto | null;
   createdAt: string;
   updatedAt: string;
@@ -562,6 +608,21 @@ export interface StaffOrderDto extends OrderDto {
   customerName: string;
   /** Estorno pedido ao gateway e ainda sem confirmação: repetir o estorno é seguro. */
   refundPending: boolean;
+  /** Situação do pagamento: `on_tab` = atribuído à comanda e ainda não pago; nunca tratado como pago. */
+  settlement: OrderSettlement;
+  /** Idade em minutos desde o pagamento (ou criação), ficha 23. */
+  ageMinutes: number;
+  late: boolean;
+  notifications: OrderNotificationDto[];
+}
+
+export type OrderSettlement = 'unpaid' | 'paid' | 'on_tab' | 'settled_on_tab' | 'refunded';
+
+export interface OrderNotificationDto {
+  channel: 'in_app' | 'email' | 'sms';
+  status: 'sent' | 'failed' | 'skipped';
+  errorCode: string | null;
+  createdAt: string;
 }
 
 // ─── Sprint 2, blocos 2 e 3 ─────────────────────────────────────────────────
@@ -692,3 +753,198 @@ export interface PasskeyDto {
   createdAt: string;
   lastUsedAt: string | null;
 }
+
+// ─── Sprint 3 ───────────────────────────────────────────────────────────────
+
+// Ficha 23: fila de pedidos (FIFO).
+export interface QueueOrderDto extends StaffOrderDto {
+  /** Posição na fila FIFO (1 = próximo). */
+  queuePosition: number;
+}
+
+export interface OrderQueueDto {
+  items: QueueOrderDto[];
+  /** `received` = pedidos atribuídos a comanda (pagamento posterior) já na fila. */
+  counts: Record<'received' | 'paid' | 'preparing' | 'ready', number>;
+  /** Pedidos atrasados (idade acima da estimativa). */
+  lateCount: number;
+}
+
+// Ficha 24: estações.
+export interface KitchenStationDto {
+  id: string;
+  name: string;
+  position: number;
+  itemCount: number;
+}
+
+// Ficha 26: impressoras.
+export interface PrinterDto {
+  id: string;
+  name: string;
+  stationId: string | null;
+  stationName: string | null;
+  lastSeenAt: string | null;
+  online: boolean;
+}
+
+export interface CreatedPrinterDto extends PrinterDto {
+  /** Chave do dispositivo para o heartbeat; só aparece nesta resposta. */
+  deviceKey: string;
+}
+
+// Alertas in-app da equipe (fichas 26 e 50).
+export type StaffAlertKind = 'printer_offline' | 'low_stock' | 'tab_refund_pending' | 'stock_shortfall';
+export interface StaffAlertDto {
+  id: string;
+  kind: StaffAlertKind;
+  refId: string;
+  /** Só em `tab_refund_pending`: a comanda do estorno pendente (use em `POST tabs/:tabId/refunds/retry`). */
+  tabId: string | null;
+  message: string;
+  createdAt: string;
+}
+
+// Ficha 25: turno.
+export interface ShiftDto {
+  id: string;
+  openedAt: string;
+  closedAt: string | null;
+}
+export interface ShiftTotalsDto {
+  deliveredCount: number;
+  cancelledCount: number;
+  /** Soma dos pedidos entregues (líquido). */
+  deliveredCents: number;
+  /** Soma dos pedidos cancelados que haviam sido pagos (estornados). */
+  refundedCents: number;
+}
+export interface ShiftHistoryDto {
+  shift: ShiftDto;
+  totals: ShiftTotalsDto;
+  orders: StaffOrderDto[];
+}
+
+// Ficha 63.
+export interface UpdateOrderEstimateRequest {
+  minutes: number;
+}
+
+// Fichas 17 e 22: comandas.
+export interface TabOrderDto {
+  id: string;
+  number: number;
+  status: OrderStatus;
+  totalCents: number;
+  settlement: OrderSettlement;
+  items: OrderItemDto[];
+}
+export interface TabDto {
+  id: string;
+  label: string;
+  status: 'open' | 'closed';
+  tableIds: string[];
+  openedAt: string;
+  closedAt: string | null;
+  orders: TabOrderDto[];
+  /** Pedidos não cancelados atribuídos à comanda. */
+  totalCents: number;
+  /** Já pago: individualmente (gateway) ou no fechamento. */
+  paidCents: number;
+  /** total − pago: é o que o fechamento cobra. */
+  balanceCents: number;
+}
+export interface CloseTabRequest {
+  /** Chave de idempotência (8–64 caracteres): repetir devolve o mesmo resultado. */
+  idempotencyKey: string;
+  method?: PaymentMethod;
+  cardToken?: string;
+  paymentMethodId?: string;
+}
+export interface CloseTabResponse {
+  tab: TabDto;
+  chargedCents: number;
+  /** true quando a chamada repetiu uma chave já processada. */
+  replayed: boolean;
+}
+
+// Ficha 18: chamado de garçom.
+export interface StaffTableCallDto {
+  id: string;
+  tableId: string;
+  tableLabel: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+export interface MyTableCallDto {
+  id: string;
+  tableId: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+// Ficha 51: posição na fila.
+export interface OrderQueuePositionDto {
+  orderId: string;
+  state: 'waiting' | 'preparing' | 'ready' | 'done';
+  /** Posição entre os pedidos ativos da casa (1 = próximo); null se pronto/encerrado. */
+  position: number | null;
+  ordersAhead: number;
+  estimatedMinutes: number | null;
+  /** Minutos que faltam (estimativa − idade), nunca negativo; null quando não se aplica. */
+  remainingMinutes: number | null;
+  late: boolean;
+}
+
+// Ficha 07.
+export interface OnboardingStateDto {
+  completed: boolean;
+  completedAt: string | null;
+}
+export interface CompleteOnboardingRequest {
+  skipped?: boolean;
+}
+
+// Ficha 14: FilaZero Club.
+export interface LoyaltyEntryDto {
+  id: string;
+  type: 'earn' | 'redeem' | 'redeem_return' | 'earn_reversal';
+  points: number;
+  orderNumber: number | null;
+  note: string | null;
+  createdAt: string;
+}
+export interface LoyaltyDto {
+  /** Conta com e-mail ou celular verificado (exigido para ganhar/resgatar). */
+  eligible: boolean;
+  balancePoints: number;
+  /** Desconto em centavos que o saldo inteiro valeria (blocos de 100 pts). */
+  balanceValueCents: number;
+  rules: { centsPerPoint: number; redeemBlockPoints: number; redeemBlockCents: number; minNetCents: number };
+  entries: LoyaltyEntryDto[];
+}
+
+// Ficha 27: dashboard.
+export interface DashboardDto {
+  /** Janela do "dia" no fuso do estabelecimento. */
+  dayStart: string;
+  dayEnd: string;
+  ordersCount: number;
+  revenueCents: number;
+  /** revenue/orders, arredondado para baixo; 0 sem pedidos. */
+  averageTicketCents: number;
+  occupiedTables: number;
+  totalTables: number;
+  waitlistCount: number;
+  lateOrders: number;
+  generatedAt: string;
+}
+
+// Ficha 50: estoque.
+export interface UpdateIngredientStockRequest {
+  /** null remove o controle de estoque. */
+  stockQuantity: number | null;
+  minStockQuantity?: number;
+}
+
+// Ficha 05: reenvio não existe; falhas ficam em StaffOrderDto.notifications.

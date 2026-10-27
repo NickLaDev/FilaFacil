@@ -5,6 +5,7 @@ import Modal from '@/components/ui/Modal';
 import Toggle from '@/components/ui/Toggle';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { isSafeImageSrc } from '@/lib/validation';
+import { useStations } from '@/services/operationsService';
 import { saveMenuItem, uploadMenuItemPhoto, type MenuItemView } from '@/services/menuService';
 
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
@@ -34,6 +35,8 @@ export default function MenuItemFormModal({ establishmentId, item, categories, n
   const [file, setFile] = useState<File | null>(null);
   const preview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
   const [available, setAvailable] = useState(item?.available ?? true);
+  const [stationId, setStationId] = useState(item?.stationId ?? '');
+  const stations = useStations(establishmentId);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
 
@@ -81,6 +84,7 @@ export default function MenuItemFormModal({ establishmentId, item, categories, n
           categoryName: finalCategory,
           priceCents: Math.round(parsedPrice * 100),
           available,
+          stationId: stationId || null,
           ...(link && { imageUrl: link }),
         },
         item?.id,
@@ -135,6 +139,15 @@ export default function MenuItemFormModal({ establishmentId, item, categories, n
             <input id="item-new-category" value={newCategory} onChange={e => setNewCategory(e.target.value)} maxLength={40} placeholder="Ex: Sobremesas" className={PANEL_INPUT_CLASS} />
           </FormField>
         )}
+
+        <FormField label="Estação da cozinha" htmlFor="item-station" hint="Sem estação = Geral.">
+          <select id="item-station" value={stationId} onChange={e => setStationId(e.target.value)} className={PANEL_INPUT_CLASS}>
+            <option value="">Geral</option>
+            {(stations.data ?? []).map(station => (
+              <option key={station.id} value={station.id}>{station.name}</option>
+            ))}
+          </select>
+        </FormField>
 
         <FormField label="Foto" htmlFor="item-image" error={errors.image} hint="PNG, JPG ou WEBP até 2 MB, ou link https.">
           <div className="flex gap-3 items-start">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, BellRing, ChevronRight, Clock, LogOut, MapPin, QrCode, Search, Star } from 'lucide-react';
 import { cn, formatCents, formatCurrency, getInitials } from '@/lib/utils';
 import { imageOrPlaceholder } from '@/lib/images';
@@ -8,6 +8,7 @@ import { LoadingBlock } from '@/components/ui/QueryState';
 import { useClientLocation } from '@/services/deviceService';
 import { ORDER_STEPS } from '@/services/orderService';
 import { errorMessage } from '@/lib/api/client';
+import { useMyTableCall } from '@/services/clientExtrasService';
 import { callAttendant, useNearbyRestaurants, usePublicMenu, useRestaurantData, type Restaurant } from '@/services/restaurantService';
 import type { OrderDto, OrderStatus } from '@/types/order';
 import { isAccountVerified, useClient } from '../clientContext';
@@ -212,6 +213,17 @@ export function HomeOutOfBarScreen() {
 export function HomeInBarScreen() {
   const { go, account, table, setTable, clearCart, openMenu, openItem, showToast } = useClient();
   const [calling, setCalling] = useState(false);
+  const myCall = useMyTableCall(account && table ? table.tableId : null);
+  const hadOpenCall = useRef(false);
+  const openCall = Boolean(myCall.data && !myCall.data.resolvedAt);
+  useEffect(() => {
+    // Ficha 18: o chamado foi resolvido pela equipe → avisa o cliente.
+    if (openCall) hadOpenCall.current = true;
+    else if (hadOpenCall.current && myCall.isSuccess) {
+      hadOpenCall.current = false;
+      showToast('Seu chamado foi atendido');
+    }
+  }, [openCall, myCall.isSuccess, showToast]);
   const establishment = useRestaurantData(table?.establishmentId);
   const menu = usePublicMenu(table?.establishmentId).data?.items ?? [];
   const { active } = useClientOrders();
@@ -231,6 +243,7 @@ export function HomeInBarScreen() {
     setCalling(true);
     try {
       await callAttendant(table.tableId);
+      void myCall.refetch();
       showToast('Atendente chamado — já estamos a caminho');
     } catch (error) {
       showToast(errorMessage(error, 'Não foi possível chamar o atendente'));
@@ -312,11 +325,11 @@ export function HomeInBarScreen() {
           </div>
           <button
             onClick={() => void callWaiter()}
-            disabled={calling}
+            disabled={calling || openCall}
             className="flex items-center gap-1.5 bg-card border border-border rounded-lg px-3 py-2 text-sm font-medium text-foreground disabled:opacity-60"
           >
             <BellRing size={13} className="text-primary" />
-            {calling ? 'Chamando…' : 'Chamar atendente'}
+            {calling ? 'Chamando…' : openCall ? 'Chamado enviado — aguarde' : 'Chamar atendente'}
           </button>
         </div>
       </div>

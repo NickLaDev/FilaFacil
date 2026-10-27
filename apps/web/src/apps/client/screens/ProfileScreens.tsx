@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CalendarCheck, Check, ChevronRight, Heart, MapPin, Plus, ShieldCheck, ShoppingBag, Trash2, type LucideIcon } from 'lucide-react';
+import { CalendarCheck, Check, ChevronRight, Gift, Heart, MapPin, Plus, ShieldCheck, ShoppingBag, Trash2, type LucideIcon } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { formatPhone, isValidEmail, isValidPhone } from '@/lib/validation';
 import BottomSheet from '@/components/ui/BottomSheet';
@@ -76,6 +76,7 @@ export function ProfileScreen() {
             title="Sua atividade"
             items={[
               { icon: ShoppingBag, label: 'Meus pedidos', screen: 'orders' },
+              { icon: Gift, label: 'FilaZero Club', screen: 'club' },
               { icon: CalendarCheck, label: 'Minhas reservas', screen: 'reservations' },
               { icon: Heart, label: 'Favoritos', screen: 'favorites' },
               { icon: MapPin, label: 'Meus endereços', screen: 'addresses' },

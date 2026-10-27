@@ -11,6 +11,8 @@ import { SimulatedPaymentGateway } from '../payments/simulated-payment.gateway.j
 import { occupyForPayment } from '../tables/table-state.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import type { CreatePaymentDto } from './dto/orders.dto.js';
+import { AlertsService } from '../kitchen/alerts.service.js';
+import { OrderEffectsService } from './order-effects.service.js';
 import { ORDER_INCLUDE, toOrderDto } from './order.mapper.js';
 import { OrdersService } from './orders.service.js';
 
@@ -60,6 +62,8 @@ export class OrderPaymentsService {
     private readonly gateway: PaymentGateway,
     private readonly realtime: RealtimeService,
     private readonly orders: OrdersService,
+    private readonly effects: OrderEffectsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   // ─── Cliente: pagar ───────────────────────────────────────────────────────
@@ -113,6 +117,7 @@ export class OrderPaymentsService {
       await lockResource(tx, `order:${orderId}`);
       const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: { orderBy: { attempt: 'desc' } } } });
       if (order.status !== 'received') throw conflict('ORDER_NOT_PAYABLE', 'Este pedido não está aguardando pagamento.');
+      await this.assertNotSettledOnTab(tx, order);
       const open = order.payments.find(payment => payment.status === 'pending' || payment.status === 'approved');
       if (!open) return { kind: 'new' };
       if (open.status === 'approved') return { kind: 'already_paid' };
@@ -123,12 +128,24 @@ export class OrderPaymentsService {
     }, TRANSACTION);
   }
 
+  /**
+   * Pedido quitado no fechamento da comanda nunca é pago de novo (ALREADY_PAID); com o fechamento em andamento,
+   * o pagamento individual espera. Roda sob o lock `order:<id>` (o fechamento também o toma antes de conferir).
+   */
+  private async assertNotSettledOnTab(tx: PrismaTx, order: { tabId: string | null; tabSettledAt: Date | null }) {
+    if (order.tabSettledAt) throw conflict('ALREADY_PAID', 'Este pedido já foi pago na comanda.');
+    if (order.tabId && (await tx.tabPayment.findFirst({ where: { tabId: order.tabId, status: 'pending' }, select: { id: true } }))) {
+      throw conflict('TAB_PAYMENT_IN_PROGRESS', 'A comanda deste pedido está sendo fechada.');
+    }
+  }
+
   /** Grava a tentativa (pendente, sem id do gateway) antes de qualquer chamada externa. Null = outra requisição chegou antes. */
   private openAttempt(orderId: string, dto: CreatePaymentDto) {
     return this.prisma.$transaction(async tx => {
       await lockResource(tx, `order:${orderId}`);
       const order = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: { orderBy: { attempt: 'desc' } } } });
       if (order.status !== 'received') throw conflict('ORDER_NOT_PAYABLE', 'Este pedido não está aguardando pagamento.');
+      await this.assertNotSettledOnTab(tx, order);
       if (order.payments.some(payment => payment.status === 'pending' || payment.status === 'approved')) return null;
       return tx.payment.create({
         data: {
@@ -328,7 +345,7 @@ export class OrderPaymentsService {
    * gateway (`refundRequestedAt`) e a chave de idempotência é fixa: repetir nunca estorna duas vezes.
    * Qualquer resposta (sucesso, erro, "já estornado") termina consultando o gateway — a verdade vem dele.
    */
-  async refund(establishmentId: string, orderId: string): Promise<void> {
+  async refund(establishmentId: string, orderId: string, options: { customer?: boolean } = {}): Promise<void> {
     if (!this.gateway.available) throw serviceUnavailable('PAYMENT_UNAVAILABLE', 'O pagamento pelo app não está disponível no momento.');
     const target = await this.prisma.$transaction(async tx => {
       await lockResource(tx, `order:${orderId}`);
@@ -339,7 +356,9 @@ export class OrderPaymentsService {
       if (!order) throw notFound('Pedido não encontrado.');
       const payment = order.payments[0];
       // Estorno já pedido e não confirmado pode ser repetido mesmo se o pedido avançou de etapa.
-      const refundable = order.status === 'paid' || order.status === 'preparing' || (payment?.refundRequestedAt && order.status === 'ready');
+      const refundable = options.customer
+        ? order.status === 'paid' || Boolean(payment?.refundRequestedAt)
+        : order.status === 'paid' || order.status === 'preparing' || (payment?.refundRequestedAt && order.status === 'ready');
       if (!payment?.providerPaymentId || !refundable) {
         throw unprocessable('ORDER_NOT_REFUNDABLE', 'Só é possível estornar pedidos pagos que ainda não ficaram prontos.');
       }
@@ -367,6 +386,61 @@ export class OrderPaymentsService {
     // O gateway aceitou mas ainda não reflete o estorno: o webhook ou a próxima consulta fecham o estado.
   }
 
+  // ─── Cancelamento (ficha 10) ──────────────────────────────────────────────
+
+  /**
+   * Cancela o pedido. Cliente: só antes do preparo (`received`/`paid`). Equipe: pedido sem cobrança com
+   * `orders.manage`; depois do pagamento/preparo exige `orders.refund`. Pago ⇒ estorno automático pelo fluxo
+   * existente (o pedido só fica `cancelled` quando o gateway confirma o estorno; estorno incerto é repetível e
+   * o pedido segue pago). Estoque já consumido no preparo não é revertido; pontos são devolvidos/revertidos.
+   */
+  async cancel(actor: { customerId: string } | { establishmentId: string; actorId: string; canRefund: boolean }, orderId: string): Promise<void> {
+    const customer = 'customerId' in actor;
+    const order = await this.prisma.order.findFirst({
+      where: customer ? { id: orderId, userId: actor.customerId } : { id: orderId, establishmentId: actor.establishmentId },
+      select: { id: true, status: true, establishmentId: true, tabSettledAt: true, payments: { orderBy: { attempt: 'desc' }, take: 1 } },
+    });
+    if (!order) throw notFound('Pedido não encontrado.');
+    const payment = order.payments[0];
+    const notCancellable = () => conflict('ORDER_NOT_CANCELLABLE', customer ? 'Este pedido não pode mais ser cancelado pelo app. Procure o atendimento.' : 'Este pedido não pode ser cancelado.');
+    if (order.status === 'delivered' || order.status === 'cancelled') throw notCancellable();
+    if (order.tabSettledAt) {
+      throw conflict('ORDER_SETTLED_ON_TAB', 'Este pedido já foi pago no fechamento da comanda e não pode ser cancelado pelo sistema. Procure o atendimento para o ajuste.');
+    }
+    if (customer && (order.status === 'preparing' || order.status === 'ready')) throw notCancellable();
+    if (!customer && order.status !== 'received' && !actor.canRefund) {
+      throw forbidden('MISSING_PERMISSION', 'Seu usuário não tem permissão para cancelar pedidos já pagos ou em preparo.');
+    }
+
+    if (payment?.status === 'approved') {
+      // Pago: estorno automático (a atualização para `cancelled` vem do gateway, via `apply`).
+      await this.refund(order.establishmentId, order.id, { customer });
+      if (!customer) await this.prisma.order.updateMany({ where: { id: order.id, status: 'cancelled', cancelledById: null }, data: { cancelledById: actor.actorId } });
+      return;
+    }
+    if (payment?.status === 'pending') {
+      // Cobrança aberta (Pix): cancela no gateway antes; resultado incerto ou já pago interrompe.
+      if (!this.gateway.available) throw serviceUnavailable('PAYMENT_UNAVAILABLE', 'O pagamento pelo app não está disponível no momento.');
+      if (payment.providerPaymentId) await this.discardPending(payment);
+      else if (!(await this.reconcile(payment))) throw conflict('PAYMENT_UNCERTAIN', 'Há um pagamento em confirmação. Tente cancelar novamente em instantes.');
+    }
+    const result = await this.prisma.$transaction(async tx => {
+      await lockResource(tx, `order:${order.id}`);
+      const current = await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: { status: true, userId: true, tabSettledAt: true, payments: { where: { status: { in: ['pending', 'approved'] } }, select: { id: true }, take: 1 } } });
+      if (current.tabSettledAt) throw conflict('ORDER_SETTLED_ON_TAB', 'Este pedido já foi pago no fechamento da comanda.');
+      if (current.payments.length > 0) throw conflict('PAYMENT_IN_PROGRESS', 'Há um pagamento em andamento neste pedido.');
+      if (current.status === 'delivered' || current.status === 'cancelled' || (customer && current.status !== 'received')) throw notCancellable();
+      const changed = await tx.order.updateMany({
+        where: { id: order.id, status: current.status },
+        data: { status: 'cancelled', cancelledAt: new Date(), cancelledById: customer ? null : actor.actorId, cancelReason: customer ? 'customer' : 'staff' },
+      });
+      if (changed.count === 0) throw conflict('ORDER_STATUS_CHANGED', 'O pedido foi atualizado por outra pessoa. Recarregue.');
+      await this.effects.onCancelled(tx, order.id);
+      return current;
+    }, TRANSACTION);
+    this.realtime.orderUpdated(result.userId, order.establishmentId, order.id);
+  }
+
   /** Aplica o estado do gateway sob lock do pedido e avisa os interessados depois do commit. */
   private async applyLocked(paymentId: string, gatewayPayment: GatewayPayment) {
     const result = await this.prisma.$transaction(async tx => {
@@ -375,9 +449,41 @@ export class OrderPaymentsService {
       await lockResource(tx, `order:${found.orderId}`);
       const payment = await tx.payment.findUniqueOrThrow({ where: { id: paymentId }, include: { order: { select: { userId: true, establishmentId: true } } } });
       const changed = await this.apply(tx, payment, gatewayPayment);
-      return changed ? { orderId: payment.orderId, ...payment.order } : null;
+      return changed ? { orderId: payment.orderId, duplicate: changed === 'duplicate', ...payment.order } : null;
     }, TRANSACTION);
     if (result) this.realtime.orderUpdated(result.userId, result.establishmentId, result.orderId);
+    if (result?.duplicate) await this.refundDuplicate(paymentId, result.establishmentId);
+  }
+
+  /**
+   * Pagamento individual aprovado DEPOIS de o pedido ser quitado no fechamento da comanda (ex.: Pix aprovado após o
+   * prazo local): é cobrança em duplicidade. O estorno é pedido na hora (idempotente); sem confirmação, o estorno fica
+   * registrado (`refundRequestedAt`) e um alerta não dispensável avisa a equipe; `tabs/:id/refunds/retry` repete.
+   */
+  private async refundDuplicate(paymentId: string, establishmentId: string) {
+    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    const providerId = payment.providerPaymentId;
+    let refunded = false;
+    if (providerId) {
+      try {
+        await this.gateway.refundPayment(providerId, `refund-${paymentId}`);
+      } catch (error) {
+        if (!(error instanceof GatewayError)) throw error;
+      }
+      try {
+        const current = await this.gateway.getPayment(providerId);
+        if (current.status === 'refunded') {
+          await this.applyLocked(paymentId, current);
+          refunded = true;
+        }
+      } catch (error) {
+        if (!(error instanceof GatewayError)) throw error;
+      }
+    }
+    if (!refunded) {
+      this.logger.error(`Pagamento ${paymentId} aprovado em pedido já quitado na comanda; estorno pendente.`);
+      await this.alerts.open(establishmentId, 'tab_refund_pending', paymentId, 'Pagamento em duplicidade (pedido já quitado na comanda): estorno pendente. Repita o estorno na comanda.');
+    }
   }
 
   /**
@@ -385,7 +491,7 @@ export class OrderPaymentsService {
    * estado aplicado duas vezes não faz nada. Precisa rodar sob `lockResource(order:<id>)`.
    * Devolve `true` quando algo mudou.
    */
-  private async apply(tx: PrismaTx, payment: Payment, gatewayPayment: GatewayPayment): Promise<boolean> {
+  private async apply(tx: PrismaTx, payment: Payment, gatewayPayment: GatewayPayment): Promise<boolean | 'duplicate'> {
     if (gatewayPayment.externalReference && gatewayPayment.externalReference !== payment.id) {
       this.logger.error(`Pagamento ${gatewayPayment.id} não pertence a ${payment.id}; ignorado.`);
       return false;
@@ -423,13 +529,23 @@ export class OrderPaymentsService {
     await tx.payment.update({ where: { id: payment.id }, data });
 
     if (statusChanged && data.status === 'approved') {
-      await tx.order.updateMany({ where: { id: payment.orderId, status: 'received' }, data: { status: 'paid' } });
+      const settled = await tx.order.findUnique({ where: { id: payment.orderId }, select: { tabSettledAt: true } });
+      if (settled?.tabSettledAt) {
+        // Pedido já pago no fechamento da comanda: este pagamento é duplicado. O pedido não muda; o estorno é pedido já.
+        await tx.payment.update({ where: { id: payment.id }, data: { refundRequestedAt: new Date() } });
+        return 'duplicate';
+      }
+      await tx.order.updateMany({ where: { id: payment.orderId, status: 'received' }, data: { status: 'paid', paidAt: data.approvedAt as Date } });
       // Ficha 16: pagamento aprovado ocupa a mesa do pedido (se estava livre) e inicia a conta dela.
       const order = await tx.order.findUnique({ where: { id: payment.orderId }, select: { tableId: true, establishmentId: true } });
       await occupyForPayment(tx, order?.tableId ?? null, order?.establishmentId ?? '', data.approvedAt as Date);
     }
     if (statusChanged && data.status === 'refunded') {
-      await tx.order.updateMany({ where: { id: payment.orderId, status: { in: ['received', 'paid', 'preparing', 'ready'] } }, data: { status: 'cancelled' } });
+      const cancelled = await tx.order.updateMany({
+        where: { id: payment.orderId, tabSettledAt: null, status: { in: ['received', 'paid', 'preparing', 'ready'] } },
+        data: { status: 'cancelled', cancelledAt: new Date(), cancelReason: 'refunded' },
+      });
+      if (cancelled.count > 0) await this.effects.onCancelled(tx, payment.orderId);
     }
     return true;
   }

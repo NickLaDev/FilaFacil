@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, IsUrl, Length, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, IsUrl, IsUUID, Length, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { Trim } from '../../../common/validation/transforms.js';
 
 export const MAX_PRICE_CENTS = 1_000_000;
@@ -37,6 +37,12 @@ export class CreateMenuItemDto {
   @IsOptional()
   @IsBoolean()
   available?: boolean;
+
+  /** Ficha 24: estação da cozinha; null/ausente = "Geral". */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsUUID()
+  stationId?: string | null;
 }
 
 export class UpdateMenuItemDto extends PartialType(CreateMenuItemDto) {}

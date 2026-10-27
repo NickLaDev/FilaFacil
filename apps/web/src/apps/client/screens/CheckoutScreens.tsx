@@ -9,6 +9,8 @@ import { formatPhone } from '@/lib/validation';
 import { useRestaurantData } from '@/services/restaurantService';
 import { CardError, isCardPaymentConfigured, tokenizeCard, type CardInput } from '@/services/mercadoPago';
 import { useAuthProviders } from '@/services/authService';
+import { discountForPoints, maxRedeemablePoints, LOYALTY_REDEEM_BLOCK_POINTS } from '@filafacil/shared';
+import { useLoyalty } from '@/services/clientExtrasService';
 import { queryClient } from '@/lib/api/queryClient';
 import { checkoutAttempt, createOrder, finishCheckout, formatEstimate, ordersKey, payOrder, simulatePixPayment, syncOrderPayment, useOrder } from '@/services/orderService';
 import type { CreatePaymentRequest, OrderDto, PaymentMethod } from '@/types/order';
@@ -183,6 +185,8 @@ export function PaymentScreen() {
   const [failureReason, setFailureReason] = useState('');
   const [pendingOrder, setPendingOrder] = useState<OrderDto | null>(null);
   const [scenario, setScenario] = useState<SimulatedScenario>('sim_approved');
+  const [redeemPoints, setRedeemPoints] = useState(0);
+  const loyalty = useLoyalty(Boolean(account)).data;
   const provider = useAuthProviders().data?.paymentProvider;
   const simulated = provider === 'simulated';
   const paymentUnavailable = provider === 'none';
@@ -297,8 +301,11 @@ export function PaymentScreen() {
 
     // O total exibido vai junto no pedido e no pagamento: se o servidor tiver outro valor, nada é cobrado. O total
     // também compõe o resumo do carrinho, então preço novo = nova tentativa (outro pedido), nunca o pedido velho.
-    const totalCents = Math.round(total * 100);
-    const signature = JSON.stringify([cartEstablishmentId, table?.tableId, totalCents, cart.map(line => [line.itemId, line.quantity, line.notes])]);
+    const subtotalCents = Math.round(total * 100);
+    // Ficha 14: o resgate vale só se o servidor também aceitar (saldo, múltiplo de 100, total líquido ≥ R$ 1,00).
+    const redeem = loyalty?.eligible ? Math.min(redeemPoints, maxRedeemablePoints(loyalty.balancePoints, subtotalCents)) : 0;
+    const totalCents = subtotalCents - discountForPoints(redeem);
+    const signature = JSON.stringify([cartEstablishmentId, table?.tableId, totalCents, redeem, cart.map(line => [line.itemId, line.quantity, line.notes])]);
     const attempt = checkoutAttempt(signature);
     try {
       const orderId =
@@ -309,6 +316,7 @@ export function PaymentScreen() {
             tableId: table && table.establishmentId === establishment.id ? table.tableId : undefined,
             clientRequestId: attempt.clientRequestId,
             expectedTotalCents: totalCents,
+            ...(redeem > 0 && { redeemPoints: redeem }),
             items: lines.map(line => ({ menuItemId: line.itemId, quantity: line.quantity, notes: line.notes })),
           })
         ).id;
@@ -341,6 +349,11 @@ export function PaymentScreen() {
     { id: 'debit', icon: CreditCard, label: 'Cartão de débito', sub: 'Débito à vista' },
   ];
   const cardUnavailable = method !== 'pix' && !simulated && !isCardPaymentConfigured;
+  const subtotalCents = Math.round(total * 100);
+  const maxRedeem = loyalty?.eligible ? maxRedeemablePoints(loyalty.balancePoints, subtotalCents) : 0;
+  const appliedRedeem = Math.min(redeemPoints, maxRedeem);
+  const redeemDiscountCents = discountForPoints(appliedRedeem);
+  const payableCents = subtotalCents - redeemDiscountCents;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -396,11 +409,27 @@ export function PaymentScreen() {
           <CardForm card={card} onChange={next => { setCard(next); setCardError(''); }} error={cardError} />
         )}
 
+        {maxRedeem > 0 && (
+          <div data-testid="redeem-box" className="bg-card rounded-xl border border-border p-4 flex flex-col gap-2">
+            <p className="text-sm font-display font-semibold text-foreground">FilaZero Club · você tem {loyalty?.balancePoints} pts</p>
+            <p className="text-xs text-muted-foreground">{LOYALTY_REDEEM_BLOCK_POINTS} pts = {formatCents(500)} de desconto.</p>
+            <div className="flex items-center gap-3">
+              <button aria-label="Usar menos pontos" disabled={appliedRedeem === 0} onClick={() => setRedeemPoints(Math.max(0, appliedRedeem - LOYALTY_REDEEM_BLOCK_POINTS))} className="p-2 rounded-lg bg-muted disabled:opacity-40"><Minus size={14} /></button>
+              <span data-testid="redeem-points" className="font-display font-bold w-24 text-center">{appliedRedeem} pts</span>
+              <button aria-label="Usar mais pontos" disabled={appliedRedeem >= maxRedeem} onClick={() => setRedeemPoints(appliedRedeem + LOYALTY_REDEEM_BLOCK_POINTS)} className="p-2 rounded-lg bg-muted disabled:opacity-40"><Plus size={14} /></button>
+              <button onClick={() => setRedeemPoints(maxRedeem)} disabled={appliedRedeem === maxRedeem} className="text-xs text-primary font-medium ml-auto disabled:opacity-40">Usar o máximo</button>
+            </div>
+          </div>
+        )}
+
         <div className="bg-card rounded-xl border border-border p-4 flex flex-col gap-2">
           <div className="flex justify-between text-sm"><span className="text-muted-foreground">{count} {count === 1 ? 'item' : 'itens'}</span><span>{formatCurrency(total)}</span></div>
+          {redeemDiscountCents > 0 && (
+            <div className="flex justify-between text-sm text-success"><span>Desconto FilaZero Club</span><span data-testid="redeem-discount">-{formatCents(redeemDiscountCents)}</span></div>
+          )}
           <div className="border-t border-border pt-2 flex justify-between">
             <span className="font-display font-bold text-foreground">Total</span>
-            <span className="font-display font-bold text-foreground text-xl">{formatCurrency(total)}</span>
+            <span data-testid="payable-total" className="font-display font-bold text-foreground text-xl">{formatCents(payableCents)}</span>
           </div>
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import type { IngredientDto, IngredientUnit, TechnicalSheetDto } from '@filafacil/shared';
+import { REALTIME_EVENTS, type IngredientDto, type IngredientUnit, type TechnicalSheetDto } from '@filafacil/shared';
 import { api } from '@/lib/api/client';
 import { queryClient } from '@/lib/api/queryClient';
+import { useRealtime } from '@/lib/realtime';
 import { staffKeys } from './staffKeys';
 
 export interface IngredientView {
@@ -10,6 +11,10 @@ export interface IngredientView {
   unit: IngredientUnit;
   unitCost: number;
   usedInSheets: number;
+  /** Ficha 50: null = sem controle de estoque. */
+  stockQuantity: string | null;
+  minStockQuantity: string;
+  lowStock: boolean;
 }
 
 const toIngredient = (ingredient: IngredientDto): IngredientView => ({ ...ingredient, unitCost: Number(ingredient.unitCost) });
@@ -22,6 +27,7 @@ function refresh(establishmentId: string) {
 }
 
 export function useIngredients(establishmentId: string) {
+  useRealtime({ establishmentId }, [REALTIME_EVENTS.stockUpdated], () => void queryClient.invalidateQueries({ queryKey: staffKeys.ingredients(establishmentId) }));
   return useQuery({
     queryKey: staffKeys.ingredients(establishmentId),
     queryFn: async ({ signal }) => (await api.get<IngredientDto[]>(`${base(establishmentId)}/ingredients`, undefined, signal)).map(toIngredient),

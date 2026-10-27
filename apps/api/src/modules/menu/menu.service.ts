@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { AvailabilityChangeDto, ManagedMenuItem, MenuCategoryDto, Page } from '@filafacil/shared';
-import { notFound } from '../../common/http/app-error.js';
+import { notFound, unprocessable } from '../../common/http/app-error.js';
 import { pageArgs, toPage, type PageQueryDto } from '../../common/pagination/page-query.dto.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -19,6 +19,7 @@ const ITEM_SELECT = {
   highlighted: true,
   position: true,
   updatedAt: true,
+  station: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
 } satisfies Prisma.MenuItemSelect;
 
@@ -34,6 +35,8 @@ const toManagedItem = (item: ItemRow): ManagedMenuItem => ({
   imageUrl: item.imageUrl,
   available: item.available,
   highlighted: item.highlighted,
+  stationId: item.station?.id ?? null,
+  stationName: item.station?.name ?? null,
   position: item.position,
   updatedAt: item.updatedAt.toISOString(),
 });
@@ -72,11 +75,13 @@ export class MenuService {
   async createItem(establishmentId: string, dto: CreateMenuItemDto): Promise<ManagedMenuItem> {
     const item = await this.prisma.$transaction(async tx => {
       const categoryId = await this.categoryIdFor(tx, establishmentId, dto.categoryName);
+      const stationId = await this.stationIdFor(tx, establishmentId, dto.stationId);
       const last = await tx.menuItem.aggregate({ where: { categoryId }, _max: { position: true } });
       return tx.menuItem.create({
         data: {
           establishmentId,
           categoryId,
+          stationId,
           name: dto.name,
           description: dto.description ?? '',
           priceCents: dto.priceCents,
@@ -95,9 +100,11 @@ export class MenuService {
     const current = await this.findItem(establishmentId, itemId);
     const item = await this.prisma.$transaction(async tx => {
       const categoryId = dto.categoryName ? await this.categoryIdFor(tx, establishmentId, dto.categoryName) : undefined;
+      const stationId = dto.stationId === undefined ? undefined : await this.stationIdFor(tx, establishmentId, dto.stationId);
       return tx.menuItem.update({
         where: { id: itemId },
         data: {
+          stationId,
           name: dto.name,
           description: dto.description,
           priceCents: dto.priceCents,
@@ -194,6 +201,14 @@ export class MenuService {
     });
     if (!item) throw itemNotFound();
     return item;
+  }
+
+  /** Estação (ficha 24) do mesmo estabelecimento; null remove a estação (= "Geral"). */
+  private async stationIdFor(tx: PrismaTx, establishmentId: string, stationId: string | null | undefined) {
+    if (!stationId) return null;
+    const station = await tx.kitchenStation.findFirst({ where: { id: stationId, establishmentId }, select: { id: true } });
+    if (!station) throw unprocessable('INVALID_STATION', 'Estação não encontrada neste estabelecimento.', [{ field: 'stationId', message: 'Estação inválida.' }]);
+    return station.id;
   }
 
   /** Categoria pelo nome (sem diferenciar maiúsculas); cria no fim da ordem se ainda não existir. */

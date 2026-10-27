@@ -58,6 +58,10 @@ export class IngredientResponseDto implements IngredientDto {
   unitCost!: string;
   /** Em quantas fichas o insumo aparece. */
   usedInSheets!: number;
+  /** Estoque atual; null = sem controle. */
+  stockQuantity!: string | null;
+  minStockQuantity!: string;
+  lowStock!: boolean;
 }
 
 export class TechnicalSheetLineResponseDto implements TechnicalSheetLineDto {

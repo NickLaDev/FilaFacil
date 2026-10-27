@@ -23,12 +23,10 @@ describe('configuração de e-mail e pagamento', () => {
     expect(parseEnv({ ...base, EMAIL_PROVIDER: 'smtp', SMTP_HOST: 'smtp.exemplo.com', SMTP_FROM: 'App <no-reply@exemplo.com>' }).SMTP_PORT).toBe(587);
   });
 
-  it('Mercado Pago exige o token; em produção, também o segredo do webhook', () => {
-    expect(() => parseEnv({ ...base, PAYMENT_PROVIDER: 'mercadopago' })).toThrow(/MP_ACCESS_TOKEN/);
-    const configured = { ...base, PAYMENT_PROVIDER: 'mercadopago', MP_ACCESS_TOKEN: 'TEST-token' };
-    expect(parseEnv(configured).PAYMENT_PROVIDER).toBe('mercadopago');
-    expect(() => parseEnv({ ...configured, NODE_ENV: 'production', COOKIE_SECURE: 'true', EMAIL_PROVIDER: 'none', SMS_PROVIDER: 'none' })).toThrow(/MP_WEBHOOK_SECRET/);
-    expect(parseEnv({ ...configured, NODE_ENV: 'production', COOKIE_SECURE: 'true', SMS_PROVIDER: 'none', MP_WEBHOOK_SECRET: 'segredo' }).MP_WEBHOOK_SECRET).toBe('segredo');
+  it('gateway real fica bloqueado até existir reconciliação periódica de pagamentos pendentes', () => {
+    const configured = { ...base, PAYMENT_PROVIDER: 'mercadopago', MP_ACCESS_TOKEN: 'TEST-token', MP_WEBHOOK_SECRET: 'segredo' };
+    expect(() => parseEnv(configured)).toThrow(/reconcilia/);
+    expect(() => parseEnv({ ...configured, NODE_ENV: 'production', COOKIE_SECURE: 'true', EMAIL_PROVIDER: 'none', SMS_PROVIDER: 'none' })).toThrow(/reconcilia/);
   });
 
   it('provider de e-mail de desenvolvimento continua proibido em produção', () => {

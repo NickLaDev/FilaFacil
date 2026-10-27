@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { Api, createOrder, menuItems, payApproved, qr } from '../support/api';
 import { ACCOUNTS, QR, SEED } from '../support/env';
 import { dbOne, dbQuery } from '../support/db';
+import { paceUi } from '../support/pacer';
 import { addItem, cartLine, expectCartTotal, openCart, payWithCard } from '../support/client-flow';
 import { brlRe, enterTableByLink, newClientContext, nav, otpMark, typeCode, waitForOtp } from '../support/ui';
 import { Disposable, clientApi, createDisposableAccount, managerApi, releaseTable } from '../support/domain';
@@ -144,6 +145,7 @@ test('A4 · Pix simulado: gera cobrança pendente e "Simular pagamento do Pix" c
   await addItem(page, 'Gin Tônica', 1);
   await openCart(page);
   await page.getByRole('button', { name: /Confirmar pedido/ }).click();
+  await paceUi('payment');
   await page.getByRole('button', { name: 'Gerar Pix' }).click();
   await expect(page.getByText('Pix simulado — não pagável')).toBeVisible();
   await expect(page.getByText(/SIMULADO-NAO-PAGAVEL/)).toBeVisible();
@@ -270,8 +272,12 @@ test('A8 · pagamento duplicado: segundo pagamento é recusado e só existe UMA 
 
   // corrida: dois pagamentos simultâneos do mesmo pedido
   const o2 = await createOrder(api, { establishmentId: SEED.mestre, tableId: tid, items: [{ menuItemId: item('Caipirinha de Limão').id, quantity: 2 }] });
-  const [a, b] = await Promise.all([payApproved(api, o2.body.id, o2.body.totalCents), payApproved(api, o2.body.id, o2.body.totalCents)]);
-  expect([a.status, b.status].filter(s => s < 300).length, JSON.stringify([a.body, b.body])).toBe(1);
+  // A corrida precisa ser REAL: chamadas diretas (raw) ignoram o pacer, que serializaria as duas.
+  const payRaw = () => api.post(`orders/${o2.body.id}/payments`, { method: 'credit', cardToken: 'sim_approved', paymentMethodId: 'simulated', expectedTotalCents: o2.body.totalCents }, { raw: true });
+  const [a, b] = await Promise.all([payRaw(), payRaw()]);
+  // A segunda chamada pode devolver o MESMO pagamento ainda em andamento (200, idempotente); o que não pode haver é mais de uma cobrança aprovada.
+  expect([a, b].filter(r => r.status < 300 && r.body.status === 'paid').length, JSON.stringify([a.body, b.body])).toBe(1);
+  expect(new Set([a, b].filter(r => r.status < 300).map(r => r.body.payment?.id)).size).toBe(1);
   expect(await dbQuery("select status from payments where order_id=$1 and status='approved'", [o2.body.id])).toHaveLength(1);
 
   // mesma tentativa de checkout (clientRequestId) não duplica o pedido

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, ClipboardList, LogOut, Map as MapIcon } from 'lucide-react';
+import { BellRing, BookOpen, ClipboardList, LogOut, Map as MapIcon, Receipt } from 'lucide-react';
 import type { MeResponse, OrderingStatus } from '@filafacil/shared';
 import AccessBlocked from '@/components/layout/AccessBlocked';
 import StaffGate from '@/components/layout/StaffGate';
@@ -12,12 +12,18 @@ import { useRestaurant } from '@/services/restaurantService';
 import FloorMapSection from './sections/FloorMapSection';
 import MenuAvailabilitySection from './sections/MenuAvailabilitySection';
 import OrdersSection from './sections/OrdersSection';
+import CallsSection from './sections/CallsSection';
+import TabsSection from './sections/TabsSection';
+import AlertsBanner from '@/components/layout/AlertsBanner';
+import { useStaffCalls } from '@/services/operationsService';
 
-type AttendantSection = 'floor' | 'orders' | 'menu';
+type AttendantSection = 'floor' | 'orders' | 'calls' | 'tabs' | 'menu';
 
 const SECTIONS = [
   { id: 'floor', icon: MapIcon, label: 'Mapa', title: 'Mapa de mesas' },
   { id: 'orders', icon: ClipboardList, label: 'Pedidos', title: 'Pedidos' },
+  { id: 'calls', icon: BellRing, label: 'Chamados', title: 'Chamados de garçom' },
+  { id: 'tabs', icon: Receipt, label: 'Comandas', title: 'Comandas' },
   { id: 'menu', icon: BookOpen, label: 'Cardápio', title: 'Disponibilidade do cardápio' },
 ] as const;
 
@@ -43,6 +49,9 @@ function AttendantPanel({ me }: { me: MeResponse }) {
   const membership = me.memberships[0];
   // Página pública: traz o status de pedidos (aberto, alta demanda, pausado, fechado).
   const restaurant = useRestaurant(membership?.establishmentId);
+  const calls = useStaffCalls(membership?.establishmentId ?? '');
+  const openCalls = membership ? (calls.data?.length ?? 0) : 0;
+  const permissions = me.user.permissions;
 
   if (!membership) {
     return (
@@ -84,6 +93,9 @@ function AttendantPanel({ me }: { me: MeResponse }) {
               className={cn('relative w-10 h-10 rounded-xl flex items-center justify-center transition-colors', section === id ? 'bg-primary' : 'hover:bg-white/10')}
             >
               <Icon size={18} className={section === id ? 'text-white' : 'text-white/60'} />
+              {id === 'calls' && openCalls > 0 && (
+                <span data-testid="calls-badge" className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-error text-white text-[10px] font-bold flex items-center justify-center">{openCalls}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -111,10 +123,13 @@ function AttendantPanel({ me }: { me: MeResponse }) {
           </div>
         </header>
 
+        <AlertsBanner establishmentId={establishmentId} notify={showToast} />
         {section === 'floor' && <FloorMapSection establishmentId={establishmentId} notify={showToast} />}
         {section === 'orders' && (
-          <OrdersSection establishmentId={establishmentId} canRefund={me.user.permissions.includes('orders.refund')} notify={showToast} />
+          <OrdersSection establishmentId={establishmentId} canRefund={permissions.includes('orders.refund')} canEstimate={permissions.includes('orders.estimate')} notify={showToast} />
         )}
+        {section === 'calls' && <CallsSection establishmentId={establishmentId} notify={showToast} />}
+        {section === 'tabs' && <TabsSection establishmentId={establishmentId} notify={showToast} />}
         {section === 'menu' && <MenuAvailabilitySection establishmentId={establishmentId} notify={showToast} />}
       </div>
       <Toast message={toastMessage} />

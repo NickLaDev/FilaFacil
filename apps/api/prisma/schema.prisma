@@ -33,30 +33,32 @@ enum UserStatus {
 }
 
 model User {
-  id              String     @id @default(uuid()) @db.Uuid
-  name            String     @db.VarChar(120)
+  id                    String     @id @default(uuid()) @db.Uuid
+  name                  String     @db.VarChar(120)
   /// Sempre minúsculo (normalizado pela API).
-  email           String?    @unique @db.VarChar(254)
+  email                 String?    @unique @db.VarChar(254)
   /// Só dígitos, com DDD.
-  phone           String?    @unique @db.VarChar(11)
-  passwordHash    String?    @map("password_hash")
+  phone                 String?    @unique @db.VarChar(11)
+  passwordHash          String?    @map("password_hash")
   /// HMAC-SHA256 do CPF normalizado: garante unicidade e permite busca sem guardar o CPF em claro.
-  cpfHash         String?    @unique @map("cpf_hash") @db.Char(64)
+  cpfHash               String?    @unique @map("cpf_hash") @db.Char(64)
   /// CPF cifrado com AES-256-GCM (formato v1:iv:tag:dados, base64). Só decifrado quando estritamente necessário.
-  cpfEncrypted    String?    @map("cpf_encrypted")
+  cpfEncrypted          String?    @map("cpf_encrypted")
   /// Versão exibível (***.***.123-45).
-  cpfMasked       String?    @map("cpf_masked") @db.VarChar(14)
-  role            UserRole   @default(client)
-  status          UserStatus @default(active)
-  emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz(3)
-  phoneVerifiedAt DateTime?  @map("phone_verified_at") @db.Timestamptz(3)
-  termsAcceptedAt DateTime?  @map("terms_accepted_at") @db.Timestamptz(3)
-  marketingOptIn  Boolean    @default(false) @map("marketing_opt_in")
-  lastAccessAt    DateTime?  @map("last_access_at") @db.Timestamptz(3)
+  cpfMasked             String?    @map("cpf_masked") @db.VarChar(14)
+  role                  UserRole   @default(client)
+  status                UserStatus @default(active)
+  emailVerifiedAt       DateTime?  @map("email_verified_at") @db.Timestamptz(3)
+  phoneVerifiedAt       DateTime?  @map("phone_verified_at") @db.Timestamptz(3)
+  termsAcceptedAt       DateTime?  @map("terms_accepted_at") @db.Timestamptz(3)
+  marketingOptIn        Boolean    @default(false) @map("marketing_opt_in")
+  /// Onboarding do primeiro acesso concluído ou pulado (ficha 07); lembrado por conta.
+  onboardingCompletedAt DateTime?  @map("onboarding_completed_at") @db.Timestamptz(3)
+  lastAccessAt          DateTime?  @map("last_access_at") @db.Timestamptz(3)
   /// Conta excluída a pedido do titular (LGPD): dados pessoais anonimizados, pedidos mantidos sem identificação.
-  deletedAt       DateTime?  @map("deleted_at") @db.Timestamptz(3)
-  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt             DateTime?  @map("deleted_at") @db.Timestamptz(3)
+  createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   permissions         UserPermission[]
   memberships         EstablishmentMembership[]
@@ -67,14 +69,15 @@ model User {
   auditAsTarget       PermissionAuditLog[]         @relation("AuditTarget")
   auditAsActor        PermissionAuditLog[]         @relation("AuditActor")
   floorPlanUpdates    FloorPlan[]
-  waitlistEntries     WaitlistEntry[] @relation("WaitlistCreatedBy")
-  customerWaitlist    WaitlistEntry[] @relation("WaitlistCustomer")
+  waitlistEntries     WaitlistEntry[]              @relation("WaitlistCreatedBy")
+  customerWaitlist    WaitlistEntry[]              @relation("WaitlistCustomer")
   orders              Order[]
   otpChallenges       OtpChallenge[]
   favorites           Favorite[]
   passkeys            Passkey[]
   webauthnChallenges  WebAuthnChallenge[]
   tableCalls          TableCall[]
+  loyaltyEntries      LoyaltyLedgerEntry[]
 
   @@index([role, status])
   @@index([createdAt])
@@ -361,25 +364,30 @@ model Establishment {
   createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization    Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  plan            Plan                         @relation(fields: [planId], references: [id], onDelete: Restrict)
-  photos          EstablishmentPhoto[]
-  openingHours    OpeningHour[]
-  memberships     EstablishmentMembership[]
-  menuCategories  MenuCategory[]
-  menuItems       MenuItem[]
-  promotions      Promotion[]
-  ingredients     Ingredient[]
-  floorPlan       FloorPlan?
-  diningTables    DiningTable[]
-  waitlistEntries WaitlistEntry[]
-  availabilityLog MenuItemAvailabilityChange[]
-  orders          Order[]
-  favoritedBy     Favorite[]
-  tableCalls      TableCall[]
-  tableGroups     TableGroup[]
+  organization      Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plan              Plan                         @relation(fields: [planId], references: [id], onDelete: Restrict)
+  photos            EstablishmentPhoto[]
+  openingHours      OpeningHour[]
+  memberships       EstablishmentMembership[]
+  menuCategories    MenuCategory[]
+  menuItems         MenuItem[]
+  promotions        Promotion[]
+  ingredients       Ingredient[]
+  floorPlan         FloorPlan?
+  diningTables      DiningTable[]
+  waitlistEntries   WaitlistEntry[]
+  availabilityLog   MenuItemAvailabilityChange[]
+  orders            Order[]
+  favoritedBy       Favorite[]
+  tableCalls        TableCall[]
+  tableGroups       TableGroup[]
   tableReservations TableReservation[]
-  itemRankings    MenuItemRanking[]
+  itemRankings      MenuItemRanking[]
+  kitchenStations   KitchenStation[]
+  printers          Printer[]
+  shifts            Shift[]
+  tabs              Tab[]
+  staffAlerts       StaffAlert[]
 
   @@index([status, latitude, longitude])
   @@index([organizationId])
@@ -463,9 +471,12 @@ model MenuItem {
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(3)
   /// Destaque manual do gestor (ficha 46).
   highlighted     Boolean   @default(false)
+  /// Estação da cozinha que prepara o item (ficha 24); nulo = estação implícita "Geral".
+  stationId       String?   @map("station_id") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  station             KitchenStation?              @relation(fields: [stationId], references: [id], onDelete: SetNull)
   ranking             MenuItemRanking?
   establishment       Establishment                @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
   category            MenuCategory                 @relation(fields: [categoryId], references: [id], onDelete: Restrict)
@@ -566,17 +577,22 @@ enum IngredientUnit {
 }
 
 model Ingredient {
-  id              String         @id @default(uuid()) @db.Uuid
-  establishmentId String         @map("establishment_id") @db.Uuid
-  name            String         @db.VarChar(60)
-  unit            IngredientUnit
+  id               String         @id @default(uuid()) @db.Uuid
+  establishmentId  String         @map("establishment_id") @db.Uuid
+  name             String         @db.VarChar(60)
+  unit             IngredientUnit
   /// Custo por unidade de medida (R$), com até 4 casas.
-  unitCost        Decimal        @map("unit_cost") @db.Decimal(12, 4)
-  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  unitCost         Decimal        @map("unit_cost") @db.Decimal(12, 4)
+  /// Estoque atual (ficha 50); nulo = insumo sem controle de estoque.
+  stockQuantity    Decimal?       @map("stock_quantity") @db.Decimal(14, 4)
+  /// Alerta quando o estoque atual fica menor ou igual a este valor.
+  minStockQuantity Decimal        @default(0) @map("min_stock_quantity") @db.Decimal(14, 4)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   establishment Establishment        @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
   sheetItems    TechnicalSheetItem[]
+  movements     StockMovement[]
 
   @@unique([establishmentId, name])
   @@map("ingredients")
@@ -664,12 +680,13 @@ model DiningTable {
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  floorPlan     FloorPlan     @relation(fields: [floorPlanId], references: [id], onDelete: Cascade)
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  floorPlan     FloorPlan          @relation(fields: [floorPlanId], references: [id], onDelete: Cascade)
+  establishment Establishment      @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
   orders        Order[]
   group         TableGroup?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
   calls         TableCall[]
   reservations  TableReservation[]
+  tabs          Tab[]
 
   @@unique([floorPlanId, label])
   @@index([establishmentId, occupancy])
@@ -832,50 +849,81 @@ enum PaymentStatus {
 }
 
 model Order {
-  id              String      @id @default(uuid()) @db.Uuid
+  id                       String      @id @default(uuid()) @db.Uuid
   /// Número exibido ao cliente ("PEDIDO #184").
-  number          Int         @unique @default(autoincrement())
-  userId          String      @map("user_id") @db.Uuid
-  establishmentId String      @map("establishment_id") @db.Uuid
+  number                   Int         @unique @default(autoincrement())
+  userId                   String      @map("user_id") @db.Uuid
+  establishmentId          String      @map("establishment_id") @db.Uuid
   /// Mesa do QR Code. Se a mesa for removida da planta, o pedido continua com o nome em `tableLabel`.
-  tableId         String?     @map("table_id") @db.Uuid
-  tableLabel      String?     @map("table_label") @db.VarChar(30)
+  tableId                  String?     @map("table_id") @db.Uuid
+  tableLabel               String?     @map("table_label") @db.VarChar(30)
   /// Gerado pelo app a cada tentativa de checkout: reenviar o pedido não o duplica.
-  clientRequestId String?     @map("client_request_id") @db.VarChar(64)
-  status          OrderStatus @default(received)
+  clientRequestId          String?     @map("client_request_id") @db.VarChar(64)
+  status                   OrderStatus @default(received)
   /// Total calculado pelo servidor (preços e promoções vigentes na criação).
-  totalCents      Int         @map("total_cents")
-  pickupCode      String      @map("pickup_code") @db.Char(4)
-  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  totalCents               Int         @map("total_cents")
+  pickupCode               String      @map("pickup_code") @db.Char(4)
+  /// Desconto de pontos FilaZero Club (ficha 14); `totalCents` já é o valor líquido a pagar.
+  discountCents            Int         @default(0) @map("discount_cents")
+  redeemedPoints           Int         @default(0) @map("redeemed_points")
+  /// Tempo estimado ajustado pelo gestor (ficha 63); nulo = tempo médio da casa.
+  estimatedMinutesOverride Int?        @map("estimated_minutes_override")
+  estimateAdjustedAt       DateTime?   @map("estimate_adjusted_at") @db.Timestamptz(3)
+  estimateAdjustedById     String?     @map("estimate_adjusted_by_id") @db.Uuid
+  /// Comanda a que o pedido foi atribuído (ficha 17); pagamento posterior.
+  tabId                    String?     @map("tab_id") @db.Uuid
+  /// Pedido atribuído à comanda quitado no fechamento da comanda (ficha 22).
+  tabSettledAt             DateTime?   @map("tab_settled_at") @db.Timestamptz(3)
+  paidAt                   DateTime?   @map("paid_at") @db.Timestamptz(3)
+  preparingAt              DateTime?   @map("preparing_at") @db.Timestamptz(3)
+  readyAt                  DateTime?   @map("ready_at") @db.Timestamptz(3)
+  deliveredAt              DateTime?   @map("delivered_at") @db.Timestamptz(3)
+  cancelledAt              DateTime?   @map("cancelled_at") @db.Timestamptz(3)
+  /// Quem cancelou (nulo = cliente ou sistema) e por quê.
+  cancelledById            String?     @map("cancelled_by_id") @db.Uuid
+  cancelReason             String?     @map("cancel_reason") @db.VarChar(60)
+  /// Baixa de estoque feita (ficha 50): garante uma única baixa por pedido.
+  stockConsumedAt          DateTime?   @map("stock_consumed_at") @db.Timestamptz(3)
+  createdAt                DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  user          User          @relation(fields: [userId], references: [id], onDelete: Restrict)
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
-  table         DiningTable?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
-  items         OrderItem[]
-  payments      Payment[]
+  tab            Tab?                 @relation(fields: [tabId], references: [id], onDelete: SetNull)
+  notifications  OrderNotification[]
+  loyaltyEntries LoyaltyLedgerEntry[]
+  stockMovements StockMovement[]
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  establishment  Establishment        @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
+  table          DiningTable?         @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  items          OrderItem[]
+  payments       Payment[]
 
   @@unique([userId, clientRequestId])
   @@index([userId, createdAt(sort: Desc)])
   @@index([establishmentId, status, createdAt])
+  @@index([tabId])
   @@map("orders")
 }
 
 /// Cópia do item no momento do pedido: nome e preço não mudam se o cardápio mudar depois.
 model OrderItem {
-  id             String @id @default(uuid()) @db.Uuid
-  orderId        String @map("order_id") @db.Uuid
-  menuItemId     String @map("menu_item_id") @db.Uuid
-  name           String @db.VarChar(80)
-  unitPriceCents Int    @map("unit_price_cents")
-  quantity       Int    @db.SmallInt
-  notes          String @default("") @db.VarChar(200)
+  id             String    @id @default(uuid()) @db.Uuid
+  orderId        String    @map("order_id") @db.Uuid
+  menuItemId     String    @map("menu_item_id") @db.Uuid
+  name           String    @db.VarChar(80)
+  unitPriceCents Int       @map("unit_price_cents")
+  quantity       Int       @db.SmallInt
+  notes          String    @default("") @db.VarChar(200)
+  /// Estação do item no momento do pedido (nulo = "Geral") e quando ficou pronto (ficha 24).
+  stationId      String?   @map("station_id") @db.Uuid
+  readyAt        DateTime? @map("ready_at") @db.Timestamptz(3)
 
-  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem        @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  station  KitchenStation? @relation(fields: [stationId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([menuItemId])
+  @@index([stationId])
   @@map("order_items")
 }
 
@@ -937,4 +985,214 @@ model PermissionAuditLog {
   @@index([targetUserId, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
   @@map("permission_audit_logs")
+}
+
+// ─── Sprint 3 ───────────────────────────────────────────────────────────────
+
+/// Estação da cozinha (ficha 24), ex.: Chapa, Bar. Itens sem estação pertencem à "Geral" implícita.
+model KitchenStation {
+  id              String   @id @default(uuid()) @db.Uuid
+  establishmentId String   @map("establishment_id") @db.Uuid
+  name            String   @db.VarChar(40)
+  position        Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  menuItems     MenuItem[]
+  orderItems    OrderItem[]
+  printers      Printer[]
+
+  @@unique([establishmentId, name])
+  @@map("kitchen_stations")
+}
+
+/// Impressora da cozinha com heartbeat (ficha 26): sem sinal por 60 s = offline. Hardware real não é testado.
+model Printer {
+  id              String    @id @default(uuid()) @db.Uuid
+  establishmentId String    @map("establishment_id") @db.Uuid
+  stationId       String?   @map("station_id") @db.Uuid
+  name            String    @db.VarChar(60)
+  /// SHA-256 da chave do dispositivo (a chave só é mostrada uma vez, na criação).
+  keyHash         String    @map("key_hash") @db.Char(64)
+  lastSeenAt      DateTime? @map("last_seen_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  establishment Establishment   @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  station       KitchenStation? @relation(fields: [stationId], references: [id], onDelete: SetNull)
+
+  @@unique([establishmentId, name])
+  @@index([keyHash])
+  @@map("printers")
+}
+
+enum StaffAlertKind {
+  printer_offline
+  low_stock
+  tab_refund_pending
+  stock_shortfall
+
+  @@map("staff_alert_kind")
+}
+
+/// Alerta in-app para a equipe (impressora offline, estoque baixo). No máximo um aberto por (tipo, referência).
+model StaffAlert {
+  id              String         @id @default(uuid()) @db.Uuid
+  establishmentId String         @map("establishment_id") @db.Uuid
+  kind            StaffAlertKind
+  /// Id do objeto do alerta (impressora ou insumo).
+  refId           String         @map("ref_id") @db.Uuid
+  message         String         @db.VarChar(200)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt      DateTime?      @map("resolved_at") @db.Timestamptz(3)
+  /// Dispensado pela equipe: some do painel e não reabre até a condição normalizar (resolvedAt).
+  dismissedAt     DateTime?      @map("dismissed_at") @db.Timestamptz(3)
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  /// Índice parcial (migration): um alerta aberto por (tipo, referência).
+  @@index([establishmentId, resolvedAt])
+  @@map("staff_alerts")
+}
+
+/// Turno de trabalho (ficha 25): aberto e fechado pelo gestor; um turno aberto por estabelecimento.
+model Shift {
+  id              String    @id @default(uuid()) @db.Uuid
+  establishmentId String    @map("establishment_id") @db.Uuid
+  openedAt        DateTime  @default(now()) @map("opened_at") @db.Timestamptz(3)
+  closedAt        DateTime? @map("closed_at") @db.Timestamptz(3)
+  openedById      String?   @map("opened_by_id") @db.Uuid
+  closedById      String?   @map("closed_by_id") @db.Uuid
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@index([establishmentId, openedAt(sort: Desc)])
+  @@map("shifts")
+}
+
+enum TabStatus {
+  open
+  closed
+
+  @@map("tab_status")
+}
+
+/// Comanda da mesa ou do grupo mesclado (ficha 17). Índice parcial (migration): uma aberta por escopo.
+model Tab {
+  id                    String    @id @default(uuid()) @db.Uuid
+  establishmentId       String    @map("establishment_id") @db.Uuid
+  /// Mesa âncora (a primeira por rótulo do escopo) e chave do escopo: id do grupo ou da mesa.
+  tableId               String?   @map("table_id") @db.Uuid
+  scopeKey              String    @map("scope_key") @db.VarChar(40)
+  label                 String    @db.VarChar(120)
+  status                TabStatus @default(open)
+  openedById            String?   @map("opened_by_id") @db.Uuid
+  closedById            String?   @map("closed_by_id") @db.Uuid
+  openedAt              DateTime  @default(now()) @map("opened_at") @db.Timestamptz(3)
+  closedAt              DateTime? @map("closed_at") @db.Timestamptz(3)
+  /// Totais congelados no fechamento (o saldo é sempre calculado na leitura enquanto a comanda está aberta).
+  closedTotalCents      Int?      @map("closed_total_cents")
+  closedPaidBeforeCents Int?      @map("closed_paid_before_cents")
+  closedChargedCents    Int?      @map("closed_charged_cents")
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  table         DiningTable?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  orders        Order[]
+  payments      TabPayment[]
+
+  @@index([establishmentId, status])
+  @@map("tabs")
+}
+
+/// Cobrança do saldo da comanda no fechamento (ficha 22). Idempotente por (comanda, chave).
+/// Índice parcial (migration): no máximo uma `pending`/`approved` por comanda.
+model TabPayment {
+  id                String        @id @default(uuid()) @db.Uuid
+  tabId             String        @map("tab_id") @db.Uuid
+  idempotencyKey    String        @map("idempotency_key") @db.VarChar(64)
+  method            PaymentMethod
+  status            PaymentStatus @default(pending)
+  amountCents       Int           @map("amount_cents")
+  providerPaymentId String?       @unique @map("provider_payment_id") @db.VarChar(64)
+  failureReason     String?       @map("failure_reason") @db.VarChar(120)
+  createdById       String?       @map("created_by_id") @db.Uuid
+  approvedAt        DateTime?     @map("approved_at") @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tab Tab @relation(fields: [tabId], references: [id], onDelete: Restrict)
+
+  @@unique([tabId, idempotencyKey])
+  @@map("tab_payments")
+}
+
+/// Registro de cada aviso de pedido pronto por canal (ficha 05). Único por (pedido, canal): nunca duplica o envio.
+model OrderNotification {
+  id                String             @id @default(uuid()) @db.Uuid
+  orderId           String             @map("order_id") @db.Uuid
+  /// in_app | email | sms
+  channel           String             @db.VarChar(20)
+  kind              String             @default("order_ready") @db.VarChar(30)
+  status            NotificationStatus
+  provider          String             @db.VarChar(40)
+  destinationMasked String?            @map("destination_masked") @db.VarChar(40)
+  /// Código tipado da falha do provedor (sem detalhes sensíveis).
+  errorCode         String?            @map("error_code") @db.VarChar(40)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, kind, channel])
+  @@map("order_notifications")
+}
+
+enum LoyaltyEntryType {
+  earn
+  redeem
+  redeem_return
+  earn_reversal
+
+  @@map("loyalty_entry_type")
+}
+
+/// Razão (ledger) do FilaZero Club (ficha 14). Pontos com sinal; único por (pedido, tipo) → idempotente.
+model LoyaltyLedgerEntry {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  orderId   String           @map("order_id") @db.Uuid
+  type      LoyaltyEntryType
+  /// Positivo (earn, redeem_return) ou negativo (redeem, earn_reversal).
+  points    Int
+  note      String?          @db.VarChar(120)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, type])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("loyalty_ledger")
+}
+
+/// Movimentação de estoque de insumo (ficha 50): baixa por pedido (única por pedido+insumo) ou ajuste manual.
+model StockMovement {
+  id           String   @id @default(uuid()) @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  orderId      String?  @map("order_id") @db.Uuid
+  /// Negativo na baixa; no ajuste, a diferença aplicada.
+  quantity     Decimal  @db.Decimal(14, 4)
+  balanceAfter Decimal  @map("balance_after") @db.Decimal(14, 4)
+  /// Quanto faltou (consumo maior que o estoque): ruptura sinalizada ao gestor.
+  shortfall    Decimal  @default(0) @db.Decimal(14, 4)
+  reason       String   @db.VarChar(20)
+  actorId      String?  @map("actor_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  order      Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  /// Índice parcial (migration): uma baixa por (pedido, insumo).
+  @@index([ingredientId, createdAt(sort: Desc)])
+  @@map("stock_movements")
 }
