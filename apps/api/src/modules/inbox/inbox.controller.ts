@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ArrayMaxSize, IsArray, IsOptional, IsUUID } from 'class-validator';
 import type { AppNotificationsDto } from '@filafacil/shared';
@@ -29,6 +29,7 @@ export class MyNotificationsController {
   }
 
   @Post('read')
+  @HttpCode(204)
   @ApiOperation({ summary: 'Marca avisos como lidos (todos, se não informar ids)' })
   async read(@CurrentAuth() auth: AuthContext, @Body() dto: MarkReadDto): Promise<void> {
     await this.inbox.markUserRead(auth.userId, dto.ids);
@@ -49,6 +50,7 @@ export class StaffNotificationsController {
   }
 
   @Post('read')
+  @HttpCode(204)
   @RequireAccess([])
   @ApiOperation({ summary: 'Marca avisos da casa como lidos' })
   async read(@CurrentEstablishment() establishment: EstablishmentContext, @CurrentAuth() auth: AuthContext, @Body() dto: MarkReadDto): Promise<void> {

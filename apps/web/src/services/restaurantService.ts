@@ -40,6 +40,8 @@ export interface PricedMenuItem {
   promotion: { id: string; name: string; discountPercent: number; endsAt: string } | null;
   /** Ficha 46: mais vendido nos últimos 30 dias ou destaque manual do gestor (selo "+ pedido"). */
   topSeller: boolean;
+  /** Ficha 64: alérgenos do item (chaves do catálogo). */
+  allergens: string[];
 }
 
 export interface RestaurantSearch {
@@ -76,6 +78,7 @@ export const toPricedItem = (item: PublicMenuItem & { isTopOrdered?: boolean; is
   available: true,
   promotion: item.promotion,
   topSeller: Boolean(item.isTopOrdered || item.isHighlighted),
+  allergens: item.allergens ?? [],
 });
 
 export const restaurantKeys = {

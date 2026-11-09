@@ -191,3 +191,17 @@ Migrations novas: `20261011180000_sprint2_blocks_2_3` e `20261011190000_ranking_
 
 ## Não verificado
 - Entrega real de SMTP/SMS; WebAuthn em aparelho/navegador real (testes usam autenticador de software); recálculo semanal em tempo real (testado com relógio injetado).
+
+## Sprint 4
+
+- **Benefícios no pedido (cashback, cupom, pontos)** — ordem fixa: cupom → pontos → cashback, cada um respeitando o líquido mínimo de R$ 1,00. O servidor recalcula tudo e responde `PRICE_CHANGED` se o total do cliente divergir. O cashback a ganhar é **congelado na criação** (a regra pode mudar depois sem afetar pedidos feitos). `LoyaltyService.earnForOrder/revertForOrder` chamam `BenefitsService`: os dois razões seguem o mesmo ciclo do pedido (entregue + pago; cancelado/estornado) sem duplicar os pontos de integração (`orders`, `tabs`). Pedido não pago e vencido (30 min) solta pontos, cashback **e** cupom (`common/unpaid-hold.ts`).
+- **Cupom: uso único com índice, liberação por exclusão** — `UNIQUE (cupom, cliente)` barra a corrida; cancelar o pedido apaga o uso (o cliente pode tentar de novo). Usos presos em pedido vencido não contam para limite nem para "já usou".
+- **Cartões salvos** — `PaymentGateway.tokenizeCard` é opcional (`supportsCardVault`). O simulador gera um token `sim_tok_<cenário>_…` (final `0002` = recusado, `0119` = falha) e o `savedMethodId` é resolvido no servidor. Com o Mercado Pago real, salvar cartão responde 503 em vez de fingir (exige a API de clientes/cartões).
+- **Reservas** — decisão de disponibilidade em transação com `lockResource('booking:<casa>')`; ocupação = reservas ativas + reservas da equipe (90 min). A reserva **recusada também é gravada** (o cliente vê o motivo e o histórico fica completo). Horários em passos de 30 min, no fuso da casa; a tela mostra data/hora no fuso da casa, não no do aparelho.
+- **Avaliações** — a média usa `rating_sum / rating_count` (sem acumular erro de arredondamento); a migration converte a média legada em soma.
+- **Imutabilidade por trigger** — `incidents` só aceita `resolved_at` e `establishment_changes` não aceita UPDATE/DELETE. `TRUNCATE` (usado pelos testes) não dispara o trigger, e um estabelecimento com histórico não pode ser excluído (`ON DELETE RESTRICT`).
+- **Fatura atrasada na leitura** — além da rotina, a leitura deriva "atrasada" de `pending` vencida (por dia civil de Brasília): o status nunca depende da rotina ter rodado. A notificação, essa sim, só sai pela rotina (uma vez e a cada 3 dias).
+- **Rotinas periódicas** (monitor de integrações 10 s, validade 10 min, cobrança 1 h, recuperação de avisos já existente) começam no `onModuleInit`, são desligadas em teste e expostas como métodos com relógio injetável.
+- **Permissões novas** (`reservations.manage`, `reports.view`, `support.request`, `billing.view`, `platform.support|billing|monitoring`) — a migration as concede a quem já existe. O campo `description` da auditoria de permissões passou de 500 para 2000 caracteres (o catálogo maior estourava a coluna).
+- **Seed** — `seedSprint4` cria regras de cashback, cupons (um expirado), alérgenos, lotes (vencido, perto de vencer, no prazo), a integração `PDV Caixa 1` (chave `ik_dev_pdv_caixa1_demo_key`), faturas anteriores e um chamado.
+- **Não verificado (Sprint 4):** envio real dos e-mails de aviso (SMTP); cofre de cartões do Mercado Pago; PDV real enviando heartbeat; a rotina de cobrança em produção ao longo de meses (testada com relógio injetado).

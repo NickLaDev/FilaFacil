@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { IsBoolean, IsIn, IsInt, IsISO8601, IsOptional, IsUUID, Matches, Max, Min } from 'class-validator';
 import { BOOKING_MAX_PARTY, BOOKING_STATUSES, type BookingDto, type BookingSlotsDto, type BookingStatus } from '@filafacil/shared';
 import { ApiErrors } from '../../common/http/api-docs.js';
@@ -64,6 +65,7 @@ export class BookingsController {
 
   @ApiCookieAuth()
   @Post('bookings')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'Reserva uma mesa: confirmada ou recusada na hora, conforme a disponibilidade (ficha 30)' })
   @ApiErrors(400, 401, 404, 409, 422)
   create(@CurrentAuth() auth: AuthContext, @Body() dto: CreateBookingDto): Promise<BookingDto> {

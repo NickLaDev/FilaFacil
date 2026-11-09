@@ -6,6 +6,8 @@ Este é o repositório único do projeto (monorepo pnpm):
 
 - **Sprint 1** — frontend + **backend real** (API NestJS, PostgreSQL, autenticação, autorização, tempo real e testes).
 - **Sprint 2, blocos 1 a 3** — todas as 14 fichas têm backend e estão integradas à API (pagamento por gateway simulado).
+- **Sprint 3** — operação, mesas/comandas, FilaZero Club e gestão (ver `docs/sprint3-especificacao.md`).
+- **Sprint 4** — 14 fichas: cashback, reservas, avaliações, cartões salvos, cupons, alergias, link compartilhável, custo por período, duplicar item, validade, incidentes, pagamentos da plataforma, suporte e histórico (ver [`docs/sprint4-especificacao.md`](docs/sprint4-especificacao.md)).
 
 > A interface exibe a marca **FilaZero**, nome usado no protótipo e nas fichas. Para trocar, altere `apps/web/src/config/brand.ts`, `apps/api/src/common/brand.ts` e o `<title>` de `apps/web/index.html`.
 
@@ -103,6 +105,7 @@ Todas com a senha **`FilaFacil123`** (somente desenvolvimento — o seed se recu
 | Gestor | `ze@grupodoze.com.br` | Lancheria do Zé e Bar do Zé (plano Pro) |
 | Atendente | `carlos@bardomestre.com.br` | Bar do Mestre — painel `/atendente` |
 | Atendente suspensa | `mariana@bardomestre.com.br` | Login bloqueado (teste de suspensão) |
+| Integração (PDV) | — | Chave de demonstração `ik_dev_pdv_caixa1_demo_key` em `POST /api/integrations/heartbeat` (cabeçalho `X-Integration-Key`); sem sinal por 30 s abre um incidente |
 | Cliente | `joao@email.com` | Celular `(19) 99999-9999`, CPF `529.982.247-25`, 2 endereços |
 
 **Login por celular/e-mail com código:** em desenvolvimento o código (aleatório, 6 dígitos) aparece no **terminal da API** (`[SMS dev]` / `[E-mail dev]`). Não existe código fixo.
@@ -157,6 +160,25 @@ Em `pnpm dev`, o botão **DEV** alterna entre os perfis. Os perfis compartilham 
 ### Sprint 2 — integrada à API
 
 Blocos 1 a 3 com backend: QR Code da mesa (02), pagamento (04), carrinho (08), acompanhamento do pedido (09), mapa de mesas com reservada/chamado (16), recuperação de senha (44), favoritos (45), "+ pedido" (46), mesclagem de mesas (47), exclusão LGPD (53), biometria (59), filtro múltiplo de categorias (60), duplicação de planta (61) e verificação de contato (65). Pendências em [O que ainda é simulado](#o-que-ainda-é-simulado).
+
+### Sprint 4 — integrada à API
+
+| Ficha | O que está implementado |
+|---|---|
+| 15 · Cashback em pedidos | Regras por estabelecimento ou promoção; valor congelado na criação do pedido e creditado na entrega (idempotente); saldo no perfil; uso no checkout; cancelamento/estorno devolve e reverte |
+| 30 · Reservas de mesa | Data, horário e pessoas; confirmação/recusa automática por disponibilidade (sob lock); painel do gestor/atendente; aviso in-app + e-mail |
+| 33 · Incidentes e integrações | Heartbeat com chave por integração; incidente em ~35 s sem sinal; contagem de estabelecimentos impactados; histórico imutável |
+| 38 · Pagamentos da plataforma | Fatura mensal automática e idempotente; "atrasado" automático; aviso no dia seguinte e a cada 3 dias; registro de pagamento |
+| 39 · Central de suporte | Chamados com urgência; fila priorizada; conversa com histórico; aviso a cada resposta |
+| 48 · Avaliar pedido e restaurante | Nota 1–5 e comentário por pedido entregue; média recalculada na hora; pedido de avaliação na entrega; lista recente |
+| 49 · Salvar métodos de pagamento | Cartão tokenizado no cofre do provedor (só token, bandeira, final e validade); padrão pré-selecionado no checkout |
+| 56 · Cupom por código | Validade, mínimo, limite e uso único por cliente; mensagens claras; libera o uso se o pedido for cancelado |
+| 57 · Relatório de custo por período | Custo da ficha × quantidade vendida; margem por item e categoria; CSV e PDF |
+| 62 · Compartilhar restaurante | Link `/?r=<id>&src=<origem>` abre a página; origem registrada e exibida no dashboard |
+| 64 · Alergias e restrições | Restrições no perfil; alérgenos por item; selo + aviso + confirmação antes de adicionar ao carrinho |
+| 66 · Histórico de alterações | Registro automático (autor, campo, antes/depois), somente inserção, com filtros e comparação |
+| 67 · Duplicar item | Formulário preenchido, foto copiada, sem itens ativos idênticos |
+| 70 · Alerta de validade | Lotes por insumo; alerta com antecedência configurável (padrão 7 dias, mínimo 3) e sugestão de pratos |
 
 ## Arquitetura
 
@@ -237,6 +259,9 @@ Documentação completa e interativa em **`/api/docs`** (OpenAPI em `/api/docs/o
 | Equipe · promoções | `GET/POST /establishments/:id/promotions`, `PATCH/DELETE …/promotions/:promotionId` |
 | Equipe · fichas | `GET/POST /establishments/:id/ingredients`, `PATCH/DELETE …/ingredients/:ingredientId`, `GET …/technical-sheets`, `PUT/DELETE …/technical-sheets/:menuItemId` |
 | Equipe · salão e fila | `GET/PUT /establishments/:id/floor-plan`, `POST …/floor-plan/tables/release`, `GET/POST …/waitlist`, `PATCH …/waitlist/:entryId/position`, `POST …/waitlist/:entryId/notify`, `POST …/waitlist/:entryId/seat`, `DELETE …/waitlist/:entryId` |
+| Sprint 4 · cliente | `GET /me/cashback`, `POST /coupons/validate`, `GET/POST /me/payment-methods`, `PUT …/:id/default`, `DELETE …/:id`, `POST /bookings`, `GET /me/bookings`, `POST /bookings/:id/cancel`, `GET /restaurants/:id/booking-slots`, `POST /orders/:id/review`, `GET /restaurants/:id/reviews`, `GET /restaurants/:id/cashback`, `POST /restaurants/:id/share-visits`, `GET /me/notifications`, `POST …/read` |
+| Sprint 4 · equipe | `…/cashback-rules`, `…/coupons`, `…/bookings` (+ `cancel`, `seat`), `…/reports/cost` e `…/reports/cost/export?format=csv\|pdf`, `…/ingredient-lots`, `…/expiry-settings`, `POST …/menu/items/:id/duplicate`, `…/support/tickets`, `…/invoices`, `…/notifications`, `…/share-visits` |
+| Sprint 4 · admin | `GET /admin/support/tickets` (+ `messages`, `PATCH`), `GET /admin/monitoring`, `…/incidents`, `…/integrations` (+ `rotate-key`), `POST /integrations/heartbeat` (chave do dispositivo), `GET /admin/invoices` (+ `pay`, `cancel`), `POST /admin/billing/run`, `GET /admin/establishment-changes` |
 | Admin | `GET/POST /admin/establishments`, `GET/PATCH /admin/establishments/:id`, `PATCH …/status`, `PUT …/plan`, `POST/DELETE …/photos`, `GET/POST /admin/organizations`, `GET /admin/users`, `GET /admin/users/:id`, `PATCH …/access`, `PATCH …/status`, `GET /admin/permission-audit`, `GET/POST /admin/plans`, `PATCH/DELETE /admin/plans/:id` |
 
 Os erros seguem sempre o formato `{ statusCode, code, message, details? }` (400, 401, 403, 404, 409, 413, 422, 429, 503), sem stack trace. Datas em ISO 8601 (UTC); dinheiro em centavos; custos de insumo e quantidades como string decimal.
@@ -254,6 +279,7 @@ Schema em `apps/api/prisma/schema.prisma` e migrations em `apps/api/prisma/migra
 | Fichas técnicas | `ingredients`, `technical_sheets`, `technical_sheet_items` |
 | Salão e fila | `floor_plans`, `dining_tables`, `waitlist_entries`, `waitlist_notifications` |
 | Sprint 2, blocos 2 e 3 | `favorites`, `passkeys`, `webauthn_challenges`, `table_groups`, `table_calls`, `table_reservations`, `menu_item_rankings`, `ranking_runs` |
+| Sprint 4 | `app_notifications`, `cashback_rules`, `cashback_ledger`, `coupons`, `coupon_redemptions`, `saved_payment_methods`, `bookings`, `reviews`, `share_visits`, `ingredient_lots`, `support_tickets`, `support_messages`, `integrations`, `incidents`, `invoices`, `establishment_changes` |
 | Auditoria | `permission_audit_logs` |
 
 Todas as datas são `timestamptz`. O horário de funcionamento é guardado em minutos no fuso IANA do estabelecimento.

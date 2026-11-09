@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import type { CashbackDto, CouponValidationDto } from '@filafacil/shared';
 import { ApiErrors } from '../../common/http/api-docs.js';
@@ -34,6 +35,8 @@ export class BenefitsController {
 
   @Post('coupons/validate')
   @HttpCode(200)
+  // Limite próprio: dificulta adivinhar códigos de cupom por tentativa e erro.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'Confere um cupom para o carrinho e devolve o desconto (ficha 56); recusa com mensagem clara' })
   @ApiErrors(400, 422)
   validate(@CurrentAuth() auth: AuthContext, @Body() dto: ValidateCouponDto): Promise<CouponValidationDto> {

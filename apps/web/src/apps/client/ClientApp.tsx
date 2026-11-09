@@ -26,11 +26,14 @@ import { OrderTrackingScreen, OrdersScreen, ReceiptScreen } from './screens/Orde
 import { AddressesScreen, EditProfileScreen, ProfileScreen, ReservationsScreen } from './screens/ProfileScreens';
 import { AccountSecurityScreen, DeleteAccountScreen } from './screens/AccountScreens';
 import { ClubScreen } from './screens/ClubScreen';
+import { BookingScreen, CashbackScreen, DietaryScreen, NotificationsScreen, PaymentMethodsScreen, ReviewScreen } from './screens/Sprint4Screens';
 import OnboardingScreen from './screens/OnboardingScreen';
 import { REALTIME_EVENTS } from '@filafacil/shared';
 import { useUserRealtime } from '@/lib/realtime';
 import { completeOnboarding, useOnboarding } from '@/services/clientExtrasService';
 import { errorMessage } from '@/lib/api/client';
+import { queryClient } from '@/lib/api/queryClient';
+import { recordShareVisit, SHARE_LINK_PARAM, SHARE_SOURCE_PARAM } from '@/services/sprint4Service';
 
 const EMPTY_SIGNUP: SignupDraft = { name: '', cpf: '', email: '', phone: '', password: '' };
 const MAX_LINE_QUANTITY = 20;
@@ -68,6 +71,12 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
   receipt: () => <ReceiptScreen />,
   profile: () => <ProfileScreen />,
   club: () => <ClubScreen />,
+  cashback: () => <CashbackScreen />,
+  'payment-methods': () => <PaymentMethodsScreen />,
+  dietary: () => <DietaryScreen />,
+  notifications: () => <NotificationsScreen />,
+  booking: () => <BookingScreen />,
+  review: () => <ReviewScreen />,
   'edit-profile': () => <EditProfileScreen />,
   addresses: () => <AddressesScreen />,
   'account-security': () => <AccountSecurityScreen />,
@@ -75,12 +84,16 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
 };
 
 /** Telas que exigem conta; visitante/deslogado cai no login. */
-const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations', 'club']);
+const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations', 'club', 'cashback', 'payment-methods', 'dietary', 'notifications', 'booking', 'review']);
 
 interface LaunchParams {
   oauth: { success: boolean; error: string | null };
   tableCode: string | null;
+  /** Ficha 62: link compartilhado da página de um restaurante (?r=<id>&src=<origem>). */
+  share: { restaurantId: string; source: string } | null;
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Parâmetros de abertura (?auth=…, ?auth_error=…, ?mesa=…) lidos uma única vez por carregamento da página e
@@ -94,19 +107,22 @@ function readLaunchParams(): LaunchParams {
   const success = params.get('auth') === 'success';
   const error = params.get('auth_error');
   const tableCode = params.get(QR_LINK_PARAM);
-  if (success || error || tableCode) {
-    for (const key of ['auth', 'auth_error', QR_LINK_PARAM]) params.delete(key);
+  const sharedId = params.get(SHARE_LINK_PARAM);
+  const share = sharedId && UUID_PATTERN.test(sharedId) ? { restaurantId: sharedId, source: params.get(SHARE_SOURCE_PARAM) ?? 'other' } : null;
+  if (success || error || tableCode || sharedId) {
+    for (const key of ['auth', 'auth_error', QR_LINK_PARAM, SHARE_LINK_PARAM, SHARE_SOURCE_PARAM]) params.delete(key);
     const query = params.toString();
     window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
   }
-  launchParams = { oauth: { success, error }, tableCode };
+  launchParams = { oauth: { success, error }, tableCode, share };
   return launchParams;
 }
 
 /** Marca os parâmetros como usados: uma montagem posterior do app não repete o link nem o aviso de login. */
-function consumeLaunchParams(part: 'oauth' | 'tableCode') {
+function consumeLaunchParams(part: 'oauth' | 'tableCode' | 'share') {
   if (!launchParams) return;
   if (part === 'oauth') launchParams = { ...launchParams, oauth: { success: false, error: null } };
+  else if (part === 'share') launchParams = { ...launchParams, share: null };
   else launchParams = { ...launchParams, tableCode: null };
 }
 
@@ -128,6 +144,23 @@ function TableLinkHandler({ code }: { code: string | null }) {
   return null;
 }
 
+/**
+ * Link compartilhado da página de um restaurante (ficha 62): registra a origem do acesso (métrica de marketing) e
+ * abre a página do restaurante direto — com ou sem conta, sem passar pela vinheta.
+ */
+function ShareLinkHandler({ link }: { link: { restaurantId: string; source: string } | null }) {
+  const { sessionLoading, openEstablishment } = useClient();
+  const handled = useRef(false);
+  useEffect(() => {
+    if (!link || sessionLoading || handled.current) return;
+    handled.current = true;
+    consumeLaunchParams('share');
+    void recordShareVisit(link.restaurantId, link.source);
+    openEstablishment(link.restaurantId);
+  }, [link, sessionLoading, openEstablishment]);
+  return null;
+}
+
 export default function ClientApp() {
   const me = useMe();
   const user = me.data?.user ?? null;
@@ -135,6 +168,7 @@ export default function ClientApp() {
   const [suspended, setSuspended] = useState(false);
   const [oauthResult] = useState(() => readLaunchParams().oauth);
   const [tableLink] = useState(() => readLaunchParams().tableCode);
+  const [shareLink] = useState(() => readLaunchParams().share);
   const { toastMessage, showToast } = useToast();
 
   const [screen, setScreen] = useState<ClientScreen>(oauthResult.success ? 'home-out-of-bar' : oauthResult.error ? 'login' : 'splash');
@@ -188,6 +222,9 @@ export default function ClientApp() {
     Boolean(account),
   );
 
+  // Aviso in-app novo (reserva, pedido para avaliar…): um toast discreto; a lista fica em Perfil → Notificações.
+  useUserRealtime([REALTIME_EVENTS.notificationsUpdated], () => void queryClient.invalidateQueries({ queryKey: ['notifications'] }), Boolean(account));
+
   const finishOnboarding = useCallback(
     async (skipped: boolean) => {
       setOnboardingClosed(true);
@@ -211,7 +248,7 @@ export default function ClientApp() {
     showToast,
     account,
     sessionLoading: me.isPending,
-    deepLink: tableLink !== null,
+    deepLink: tableLink !== null || shareLink !== null,
     signOut,
     isVisitor: isVisitor && !account,
     continueAsVisitor: destination => {
@@ -279,7 +316,7 @@ export default function ClientApp() {
     },
     signupDraft,
     setSignupDraft,
-  }), [screen, go, showToast, account, me.isPending, tableLink, signOut, isVisitor, postAuthScreen, table, establishmentId, selectedItemId, cart, cartEstablishmentId, orderId, verification, signupDraft]);
+  }), [screen, go, showToast, account, me.isPending, tableLink, shareLink, signOut, isVisitor, postAuthScreen, table, establishmentId, selectedItemId, cart, cartEstablishmentId, orderId, verification, signupDraft]);
 
   if (suspended) {
     return (
@@ -298,6 +335,7 @@ export default function ClientApp() {
       <div className="relative min-h-screen">
         <Toast message={toastMessage} />
         <TableLinkHandler code={tableLink} />
+        <ShareLinkHandler link={shareLink} />
         {readyOrderId && activeScreen !== 'order-tracking' && (
           <div role="status" data-testid="order-ready-banner" className="fixed top-0 inset-x-0 z-50 bg-success text-white px-4 py-3 flex items-center gap-3 shadow-lg">
             <span className="flex-1 text-sm font-semibold">🎉 Seu pedido está pronto! Retire no balcão.</span>

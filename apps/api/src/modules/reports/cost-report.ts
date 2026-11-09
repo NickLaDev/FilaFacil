@@ -84,5 +84,5 @@ export function costReportCsv(report: CostReportDto): string {
     [],
     ['Total (itens com ficha)', '', report.totals.quantity, brl(report.totals.coveredRevenueCents), brl(report.totals.costCents), brl(report.totals.marginCents), report.totals.marginPercent === null ? '' : String(report.totals.marginPercent).replace('.', ',')],
   ];
-  return `﻿${lines.map(line => line.map(csvCell).join(';')).join('\r\n')}\r\n`;
+  return `\uFEFF${lines.map(line => line.map(csvCell).join(';')).join('\r\n')}\r\n`;
 }

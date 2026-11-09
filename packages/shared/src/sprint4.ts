@@ -241,6 +241,8 @@ export interface BookingDto {
   id: string;
   establishmentId: string;
   establishmentName: string;
+  /** Fuso do estabelecimento: data e hora da reserva são exibidas nele. */
+  timezone: string;
   tableLabel: string | null;
   partySize: number;
   startsAt: string;

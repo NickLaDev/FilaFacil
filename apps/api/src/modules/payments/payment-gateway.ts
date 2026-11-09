@@ -78,6 +78,7 @@ export abstract class PaymentGateway {
   /** O provedor guarda cartões em cofre próprio (ficha 49)? Sem cofre, não há como salvar métodos de pagamento. */
   readonly supportsCardVault: boolean = false;
   /** Tokeniza o cartão no cofre do provedor e devolve um token reutilizável (ficha 49). */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura do contrato; só o simulador implementa o cofre
   tokenizeCard(_input: TokenizeCardInput): Promise<TokenizedCard> {
     return Promise.reject(new GatewayError('Este provedor não oferece cofre de cartões.', null, 'not_processed'));
   }

@@ -35,7 +35,7 @@ interface Occupation {
 }
 
 const BOOKING_INCLUDE = {
-  establishment: { select: { name: true } },
+  establishment: { select: { name: true, timezone: true } },
   table: { select: { label: true } },
   user: { select: { name: true, phone: true } },
 } as const;
@@ -49,7 +49,7 @@ type BookingRow = {
   status: BookingStatus;
   refusalReason: string | null;
   createdAt: Date;
-  establishment: { name: string };
+  establishment: { name: string; timezone: string };
   table: { label: string } | null;
   user: { name: string; phone: string | null };
 };
@@ -58,6 +58,7 @@ const toDto = (row: BookingRow, includeCustomer = false): BookingDto => ({
   id: row.id,
   establishmentId: row.establishmentId,
   establishmentName: row.establishment.name,
+  timezone: row.establishment.timezone,
   tableLabel: row.table?.label ?? null,
   partySize: row.partySize,
   startsAt: row.startsAt.toISOString(),
