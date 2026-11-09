@@ -7,7 +7,7 @@ function offsetMinutes(instant: Date, timeZone: string): number {
 }
 
 /** Instante UTC da meia-noite local (fuso IANA) do dia `y-m-d`. */
-function localMidnight(y: number, m: number, d: number, timeZone: string): Date {
+export function localMidnight(y: number, m: number, d: number, timeZone: string): Date {
   let guess = Date.UTC(y, m - 1, d, 0, 0, 0);
   for (let i = 0; i < 3; i++) guess = Date.UTC(y, m - 1, d, 0, 0, 0) - offsetMinutes(new Date(guess), timeZone) * 60_000;
   return new Date(guess);
@@ -18,4 +18,19 @@ export function dayBounds(now: Date, timeZone: string): { start: Date; end: Date
   const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now).split('-').map(Number) as [number, number, number];
   const next = new Date(Date.UTC(y, m - 1, d + 1));
   return { start: localMidnight(y, m, d, timeZone), end: localMidnight(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), timeZone) };
+}
+
+/** Instante UTC de `YYYY-MM-DD` + minutos desde a meia-noite local, no fuso IANA. Null se a data for inválida. */
+export function zonedInstant(date: string, minutes: number, timeZone: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return null;
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) return null;
+  return new Date(localMidnight(y, m, d, timeZone).getTime() + minutes * 60_000);
+}
+
+/** Data civil `YYYY-MM-DD` do instante no fuso IANA. */
+export function localDate(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
 }

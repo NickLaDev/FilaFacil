@@ -9,7 +9,7 @@ import type { EstablishmentContext } from '../access/access.types.js';
 import { CurrentAuth } from '../auth/auth.decorators.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { ImageFileInterceptor } from '../storage/image-upload.interceptor.js';
-import { CreateMenuItemDto, SetAvailabilityDto, SetHighlightDto, UpdateMenuItemDto } from './dto/menu.dto.js';
+import { CreateMenuItemDto, DuplicateMenuItemDto, SetAvailabilityDto, SetHighlightDto, UpdateMenuItemDto } from './dto/menu.dto.js';
 import { AvailabilityHistoryPageDto, ManagedMenuItemDto, MenuCategoryResponseDto } from './dto/menu-responses.dto.js';
 import { MenuRankingService } from './menu-ranking.service.js';
 import { MenuService } from './menu.service.js';
@@ -46,6 +46,18 @@ export class MenuController {
   @ApiErrors(400)
   create(@CurrentEstablishment() establishment: EstablishmentContext, @Body() dto: CreateMenuItemDto): Promise<ManagedMenuItemDto> {
     return this.menu.createItem(establishment.id, dto);
+  }
+
+  @Post('items/:itemId/duplicate')
+  @RequireAccess(['menu.edit'])
+  @ApiOperation({ summary: 'Duplica um item (ficha 67): copia nome, descrição, foto e categoria; os campos enviados substituem os copiados' })
+  @ApiErrors(400, 404, 409)
+  duplicate(
+    @CurrentEstablishment() establishment: EstablishmentContext,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: DuplicateMenuItemDto,
+  ): Promise<ManagedMenuItemDto> {
+    return this.menu.duplicateItem(establishment.id, itemId, dto);
   }
 
   @Patch('items/:itemId')

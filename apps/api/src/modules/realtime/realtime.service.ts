@@ -107,6 +107,33 @@ export class RealtimeService {
     this.emit(rooms.user(userId), REALTIME_EVENTS.loyaltyUpdated, {});
   }
 
+  cashbackUpdated(userId: string) {
+    this.emit(rooms.user(userId), REALTIME_EVENTS.cashbackUpdated, {});
+  }
+
+  /** Reserva criada/alterada: o cliente dono (se houver) e a equipe da casa recarregam. */
+  bookingsUpdated(establishmentId: string, userId?: string | null) {
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.bookingsUpdated, { establishmentId });
+    if (userId) this.emit(rooms.user(userId), REALTIME_EVENTS.bookingsUpdated, { establishmentId });
+  }
+
+  /** Aviso in-app novo: para um usuário e/ou para a equipe de uma casa. */
+  notificationsUpdated(target: { userId?: string | null; establishmentId?: string | null }) {
+    if (target.userId) this.emit(rooms.user(target.userId), REALTIME_EVENTS.notificationsUpdated, {});
+    if (target.establishmentId) this.emit(rooms.staff(target.establishmentId), REALTIME_EVENTS.notificationsUpdated, { establishmentId: target.establishmentId });
+  }
+
+  /** Chamado de suporte criado/respondido: central da plataforma e equipe da casa. */
+  supportUpdated(establishmentId: string) {
+    this.emit(rooms.admin(), REALTIME_EVENTS.supportUpdated, { establishmentId });
+    this.emit(rooms.staff(establishmentId), REALTIME_EVENTS.supportUpdated, { establishmentId });
+  }
+
+  /** Integração ou incidente mudou: painel da plataforma. */
+  monitoringUpdated() {
+    this.emit(rooms.admin(), REALTIME_EVENTS.monitoringUpdated, {});
+  }
+
   /** Papel, permissões ou vínculos do usuário mudaram: as conexões dele saem das salas da equipe na hora. */
   staffAccessChanged(userId: string) {
     const sockets = this.server?.in(rooms.user(userId)).fetchSockets();

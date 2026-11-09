@@ -1,4 +1,6 @@
-import { GatewayError, PaymentGateway, type CreateGatewayPayment, type GatewayPayment } from './payment-gateway.js';
+import { randomBytes } from 'node:crypto';
+import { detectCardBrand } from '@filafacil/shared';
+import { GatewayError, PaymentGateway, type CreateGatewayPayment, type GatewayPayment, type TokenizedCard, type TokenizeCardInput } from './payment-gateway.js';
 import type { PrismaService } from '../../database/prisma.service.js';
 
 /** Todo id de cobrança simulada começa assim: nunca se confunde com um id real do gateway. */
@@ -6,6 +8,17 @@ export const SIMULATED_ID_PREFIX = 'SIM-';
 
 /** Cenários de cartão (vão no `cardToken`; nenhum dado de cartão é digitado ou enviado). */
 export const SIMULATED_CARD_SCENARIOS = ['sim_approved', 'sim_refused', 'sim_error'] as const;
+
+/**
+ * Token de cartão salvo (ficha 49): `sim_tok_<cenário>_<aleatório>`. O cenário sai do final do número, como nos
+ * cartões de teste dos provedores: …0002 = recusado, …0119 = falha de processamento, demais = aprovado.
+ */
+export const SIMULATED_SAVED_TOKEN_PREFIX = 'sim_tok_';
+const SAVED_SCENARIOS: Record<string, string> = { a: 'sim_approved', r: 'sim_refused', e: 'sim_error' };
+
+/** Traduz o token de cartão salvo no cenário de cartão usado pelo simulador. */
+const scenarioOf = (cardToken: string | undefined) =>
+  cardToken?.startsWith(SIMULATED_SAVED_TOKEN_PREFIX) ? SAVED_SCENARIOS[cardToken.charAt(SIMULATED_SAVED_TOKEN_PREFIX.length)] : cardToken;
 
 const idFor = (reference: string) => `${SIMULATED_ID_PREFIX}${reference}`;
 
@@ -21,6 +34,7 @@ const idFor = (reference: string) => `${SIMULATED_ID_PREFIX}${reference}`;
 export class SimulatedPaymentGateway extends PaymentGateway {
   readonly provider = 'simulated';
   readonly available = true;
+  override readonly supportsCardVault = true;
   private readonly ledger = new Map<string, GatewayPayment>();
 
   constructor(private readonly prisma: PrismaService) {
@@ -51,7 +65,15 @@ export class SimulatedPaymentGateway extends PaymentGateway {
     return payment;
   }
 
+  /** Cofre simulado: valida e devolve um token opaco; nenhum dado do cartão é guardado nem registrado. */
+  override async tokenizeCard(input: TokenizeCardInput): Promise<TokenizedCard> {
+    const last4 = input.number.slice(-4);
+    const scenario = last4 === '0002' ? 'r' : last4 === '0119' ? 'e' : 'a';
+    return { token: `${SIMULATED_SAVED_TOKEN_PREFIX}${scenario}_${randomBytes(20).toString('hex')}`, brand: detectCardBrand(input.number), last4 };
+  }
+
   async createPayment(input: CreateGatewayPayment): Promise<GatewayPayment> {
+    const cardToken = scenarioOf(input.cardToken);
     const id = idFor(input.reference);
     // A referência é única por tentativa: repetir devolve a mesma cobrança, nunca outra.
     const existing = await this.lookup(id);
@@ -68,8 +90,8 @@ export class SimulatedPaymentGateway extends PaymentGateway {
         // Referência claramente falsa: não é um payload Pix e nenhum banco a reconhece.
         pix: { copyPaste: `SIMULADO-NAO-PAGAVEL-${input.reference.slice(0, 8).toUpperCase()}`, qrBase64: null, expiresAt: input.expiresAt },
       };
-    } else if (input.cardToken === 'sim_approved' || input.cardToken === 'sim_refused') {
-      const approved = input.cardToken === 'sim_approved';
+    } else if (cardToken === 'sim_approved' || cardToken === 'sim_refused') {
+      const approved = cardToken === 'sim_approved';
       payment = {
         id,
         status: approved ? 'approved' : 'refused',
@@ -78,7 +100,7 @@ export class SimulatedPaymentGateway extends PaymentGateway {
         externalReference: input.reference,
         pix: null,
       };
-    } else if (input.cardToken === 'sim_error') {
+    } else if (cardToken === 'sim_error') {
       throw new GatewayError('Falha de processamento simulada.', 503, 'not_processed');
     } else {
       throw new GatewayError('Cenário de cartão simulado inválido.', 400, 'not_processed');

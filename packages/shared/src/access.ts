@@ -38,9 +38,16 @@ export const PERMISSIONS = [
   { key: 'tabs.manage', label: 'Gerenciar comandas', scope: 'establishment' },
   { key: 'stock.manage', label: 'Gerenciar estoque de insumos', scope: 'establishment' },
   { key: 'dashboard.view', label: 'Ver o dashboard de gestão', scope: 'establishment' },
+  { key: 'reservations.manage', label: 'Gerenciar reservas de mesa', scope: 'establishment' },
+  { key: 'reports.view', label: 'Ver relatórios de custo e margem', scope: 'establishment' },
+  { key: 'support.request', label: 'Abrir chamados de suporte da plataforma', scope: 'establishment' },
+  { key: 'billing.view', label: 'Ver as faturas da plataforma', scope: 'establishment' },
   { key: 'platform.establishments', label: 'Gerenciar estabelecimentos', scope: 'platform' },
   { key: 'platform.users', label: 'Gerenciar usuários', scope: 'platform' },
   { key: 'platform.plans', label: 'Gerenciar planos', scope: 'platform' },
+  { key: 'platform.support', label: 'Atender a central de suporte', scope: 'platform' },
+  { key: 'platform.billing', label: 'Acompanhar faturas e pagamentos', scope: 'platform' },
+  { key: 'platform.monitoring', label: 'Monitorar integrações e incidentes', scope: 'platform' },
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number]['key'];
@@ -52,9 +59,9 @@ export const permissionLabel = (key: string) => PERMISSIONS.find(p => p.key === 
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
   client: ['orders.place'],
-  attendant: ['tables.view', 'menu.availability', 'orders.manage', 'tabs.manage'],
-  manager: ['tables.view', 'menu.availability', 'menu.edit', 'promotions.manage', 'recipes.manage', 'floor.manage', 'waitlist.manage', 'orders.manage', 'orders.refund', 'orders.estimate', 'kitchen.manage', 'shift.manage', 'tabs.manage', 'stock.manage', 'dashboard.view'],
-  admin: ['platform.establishments', 'platform.users', 'platform.plans'],
+  attendant: ['tables.view', 'menu.availability', 'orders.manage', 'tabs.manage', 'reservations.manage'],
+  manager: ['tables.view', 'menu.availability', 'menu.edit', 'promotions.manage', 'recipes.manage', 'floor.manage', 'waitlist.manage', 'orders.manage', 'orders.refund', 'orders.estimate', 'kitchen.manage', 'shift.manage', 'tabs.manage', 'stock.manage', 'dashboard.view', 'reservations.manage', 'reports.view', 'support.request', 'billing.view'],
+  admin: ['platform.establishments', 'platform.users', 'platform.plans', 'platform.support', 'platform.billing', 'platform.monitoring'],
 };
 
 export const PLAN_FEATURES = ['floor_plan', 'waitlist', 'promotions', 'recipes', 'layout_duplication'] as const;

@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, Length, MaxLength } from 'class-validator';
-import { EMAIL_MAX_LENGTH } from '@filafacil/shared';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { ALLERGEN_KEYS, EMAIL_MAX_LENGTH } from '@filafacil/shared';
 import { Trim } from '../../../common/validation/transforms.js';
 
 export class UpdateProfileDto {
@@ -23,6 +23,14 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(16)
   phone?: string;
+
+  /** Ficha 64: restrições alimentares e alergias (chaves do catálogo); lista vazia limpa. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(ALLERGEN_KEYS.length)
+  @ArrayUnique()
+  @IsIn(ALLERGEN_KEYS, { each: true })
+  dietaryRestrictions?: string[];
 }
 
 export class CreateAddressDto {

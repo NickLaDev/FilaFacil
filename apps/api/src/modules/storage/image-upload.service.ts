@@ -52,6 +52,12 @@ export class ImageUploadService {
     return this.storage.save(output, 'webp', 'image/webp');
   }
 
+  /** Cópia da foto enviada de outro item; null se a cópia falhar (o item duplicado segue sem foto, nunca com a mesma chave). */
+  async duplicate(key: string | null | undefined) {
+    if (!key) return null;
+    return this.storage.copy(key).catch(() => null);
+  }
+
   /** Remove o arquivo antigo depois de uma troca/exclusão (falha aqui não desfaz a operação principal). */
   async discard(key: string | null | undefined) {
     if (key) await this.storage.delete(key).catch(() => undefined);

@@ -89,6 +89,8 @@ export class PublicMenuItemDto implements PublicMenuItem {
   isTopOrdered!: boolean;
   /** Destaque manual do gestor (ficha 46). */
   isHighlighted!: boolean;
+  /** Ficha 64: alérgenos do item (chaves do catálogo). */
+  allergens!: string[];
 }
 
 export class PublicCategoryDto {

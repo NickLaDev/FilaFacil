@@ -7,6 +7,8 @@ import { CsrfGuard } from './common/security/csrf.guard.js';
 import { ConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { AccessModule } from './modules/access/access.module.js';
+import { BookingsModule } from './modules/bookings/bookings.module.js';
+import { BenefitsModule } from './modules/benefits/benefits.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 import { AccessTokenGuard } from './modules/auth/access-token.guard.js';
 import { AuthModule } from './modules/auth/auth.module.js';
@@ -14,6 +16,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { EstablishmentsModule } from './modules/establishments/establishments.module.js';
 import { FavoritesModule } from './modules/favorites/favorites.module.js';
 import { FloorPlanModule } from './modules/floor-plan/floor-plan.module.js';
+import { InboxModule } from './modules/inbox/inbox.module.js';
 import { HealthController } from './modules/health/health.controller.js';
 import { KitchenModule } from './modules/kitchen/kitchen.module.js';
 import { LoyaltyModule } from './modules/loyalty/loyalty.module.js';
@@ -21,9 +24,12 @@ import { MeModule } from './modules/me/me.module.js';
 import { MenuModule } from './modules/menu/menu.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
+import { PaymentMethodsModule } from './modules/payment-methods/payment-methods.module.js';
 import { PromotionsModule } from './modules/promotions/promotions.module.js';
 import { RealtimeGatewayModule } from './modules/realtime/realtime-gateway.module.js';
 import { RealtimeModule } from './modules/realtime/realtime.module.js';
+import { ReviewsModule } from './modules/reviews/reviews.module.js';
+import { ShareModule } from './modules/share/share.module.js';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module.js';
 import { ShiftsModule } from './modules/shifts/shifts.module.js';
 import { StockModule } from './modules/stock/stock.module.js';
@@ -39,6 +45,7 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     DatabaseModule,
     RealtimeModule,
     NotificationsModule,
+    InboxModule,
     StorageModule,
     AccessModule,
     // Limite geral: por usuário quando há sessão válida e por IP nas demais requisições. Clientes no Wi-Fi
@@ -72,8 +79,13 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     DashboardModule,
     KitchenModule,
     ShiftsModule,
+    BenefitsModule,
     LoyaltyModule,
     StockModule,
+    PaymentMethodsModule,
+    ReviewsModule,
+    ShareModule,
+    BookingsModule,
     OrdersModule,
     AdminModule,
   ],

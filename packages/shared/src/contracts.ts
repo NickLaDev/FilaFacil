@@ -42,6 +42,8 @@ export interface AuthUser {
   hasPassword: boolean;
   /** Ficha 07: null = ainda não viu (ou pulou) o onboarding. */
   onboardingCompletedAt: string | null;
+  /** Ficha 64: restrições alimentares e alergias (chaves de `ALLERGENS`). */
+  dietaryRestrictions: string[];
   permissions: Permission[];
   createdAt: string;
 }
@@ -154,6 +156,8 @@ export interface PublicMenuItem {
   isTopOrdered: boolean;
   /** Destaque manual do gestor (ficha 46). */
   isHighlighted: boolean;
+  /** Ficha 64: alérgenos do item (chaves de `ALLERGENS`). */
+  allergens: string[];
 }
 
 export interface PublicMenu {
@@ -181,6 +185,8 @@ export interface ManagedMenuItem {
   available: boolean;
   /** Destaque manual do gestor (ficha 46). */
   highlighted: boolean;
+  /** Ficha 64: alérgenos do item (chaves de `ALLERGENS`). */
+  allergens: string[];
   /** Ficha 24: estação da cozinha (null = "Geral"). */
   stationId: string | null;
   stationName: string | null;
@@ -469,6 +475,16 @@ export const REALTIME_EVENTS = {
   stockUpdated: 'stock.updated',
   /** Saldo FilaZero Club mudou (só para o dono, ficha 14). */
   loyaltyUpdated: 'loyalty.updated',
+  /** Cashback mudou (só para o dono, ficha 15). */
+  cashbackUpdated: 'cashback.updated',
+  /** Reserva criada, confirmada ou cancelada: o cliente dono e a equipe (ficha 30). */
+  bookingsUpdated: 'bookings.updated',
+  /** Aviso in-app novo para o usuário ou para a equipe da casa. */
+  notificationsUpdated: 'notifications.updated',
+  /** Chamado de suporte criado ou respondido: central da plataforma e a casa (ficha 39). */
+  supportUpdated: 'support.updated',
+  /** Integração ou incidente mudou: painel da plataforma (ficha 33). */
+  monitoringUpdated: 'monitoring.updated',
 } as const;
 
 export type RealtimeEvent = (typeof REALTIME_EVENTS)[keyof typeof REALTIME_EVENTS];
@@ -529,6 +545,10 @@ export interface CreateOrderRequest {
   expectedTotalCents?: number;
   /** Ficha 14: pontos a resgatar (múltiplo de 100; 100 pts = R$ 5). O total enviado em `expectedTotalCents` já é o líquido. */
   redeemPoints?: number;
+  /** Ficha 15: saldo de cashback a usar (centavos). O total em `expectedTotalCents` já é o líquido. */
+  useCashbackCents?: number;
+  /** Ficha 56: código do cupom. */
+  couponCode?: string;
   items: { menuItemId: string; quantity: number; notes?: string }[];
 }
 
@@ -571,6 +591,8 @@ export interface CreatePaymentRequest {
   cardToken?: string;
   /** Bandeira/tipo do cartão informado pelo SDK (ex.: "visa"). */
   paymentMethodId?: string;
+  /** Ficha 49: usa um cartão salvo (o servidor resolve o token; nenhum dado de cartão trafega). */
+  savedMethodId?: string;
   /** Total que o cliente viu; se o pedido tiver outro valor, o servidor recusa (ORDER_TOTAL_CHANGED). */
   expectedTotalCents?: number;
 }
@@ -587,6 +609,16 @@ export interface OrderDto {
   totalCents: number;
   discountCents: number;
   redeemedPoints: number;
+  /** Ficha 15: cashback usado (centavos) e quanto o pedido renderá ao ser entregue. */
+  cashbackUsedCents: number;
+  cashbackEarnCents: number;
+  /** Ficha 56: cupom aplicado. */
+  couponCode: string | null;
+  couponDiscountCents: number;
+  /** Ficha 48: entregue e ainda sem avaliação. */
+  canReview: boolean;
+  /** Nota dada pelo cliente (1–5), se já avaliou. */
+  reviewRating: number | null;
   items: OrderItemDto[];
   pickupPoint: string;
   /** Só aparece quando o pedido está pronto ou entregue. */
@@ -794,7 +826,7 @@ export interface CreatedPrinterDto extends PrinterDto {
 }
 
 // Alertas in-app da equipe (fichas 26 e 50).
-export type StaffAlertKind = 'printer_offline' | 'low_stock' | 'tab_refund_pending' | 'stock_shortfall';
+export type StaffAlertKind = 'printer_offline' | 'low_stock' | 'tab_refund_pending' | 'stock_shortfall' | 'ingredient_expiring';
 export interface StaffAlertDto {
   id: string;
   kind: StaffAlertKind;

@@ -5,4 +5,6 @@
 export abstract class FileStorage {
   abstract save(content: Buffer, extension: string, contentType: string): Promise<{ key: string; url: string }>;
   abstract delete(key: string): Promise<void>;
+  /** Cópia independente do arquivo (excluir um não afeta o outro): usada ao duplicar um item com foto. */
+  abstract copy(key: string): Promise<{ key: string; url: string }>;
 }

@@ -64,6 +64,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
     try {
       const auth = await this.sessions.authenticate(payload);
       await socket.join(rooms.user(auth.userId));
+      if (auth.role === 'admin') await socket.join(rooms.admin());
       return auth;
     } catch {
       // Sessão inválida: segue como conexão anônima.

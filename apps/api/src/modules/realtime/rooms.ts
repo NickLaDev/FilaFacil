@@ -3,4 +3,6 @@ export const rooms = {
   restaurant: (establishmentId: string) => `restaurant:${establishmentId}`,
   staff: (establishmentId: string) => `staff:${establishmentId}`,
   user: (userId: string) => `user:${userId}`,
+  /** Painel da plataforma: só administradores (o servidor decide no handshake). */
+  admin: () => 'admin',
 };

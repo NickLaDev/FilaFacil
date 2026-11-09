@@ -11,6 +11,7 @@ const VISIBLE_TO: Record<StaffAlertKind, Permission[]> = {
   low_stock: ['stock.manage'],
   tab_refund_pending: ['tabs.manage'],
   stock_shortfall: ['stock.manage'],
+  ingredient_expiring: ['recipes.manage', 'stock.manage'],
 };
 
 /**

@@ -11,12 +11,10 @@ import {
 } from '@filafacil/shared';
 import { unprocessable } from '../../common/http/app-error.js';
 import { lockResource } from '../../database/advisory-lock.js';
-import type { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
+import { expiredHoldWhere } from '../../common/unpaid-hold.js';
+import { BenefitsService } from '../benefits/benefits.service.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
-
-/** Pedido sem pagamento por mais tempo que isto não segura mais os pontos resgatados (mesmo prazo do pedido). */
-const UNPAID_HOLD_MS = 30 * 60 * 1000;
 
 /**
  * FilaZero Club (ficha 14). Razão (ledger) de pontos com chave única por (pedido, tipo): toda operação é
@@ -27,6 +25,7 @@ export class LoyaltyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly benefits: BenefitsService,
   ) {}
 
   /** Conta verificada (e-mail ou celular) participa do clube. */
@@ -38,7 +37,7 @@ export class LoyaltyService {
   async balance(client: PrismaTx | PrismaService, userId: string): Promise<number> {
     const sum = await client.loyaltyLedgerEntry.aggregate({ where: { userId }, _sum: { points: true } });
     // Pontos presos em pedido não pago e vencido já contam como disponíveis (a devolução no razão acontece depois).
-    const expired = await client.order.aggregate({ where: this.expiredHoldWhere(userId), _sum: { redeemedPoints: true } });
+    const expired = await client.order.aggregate({ where: { ...expiredHoldWhere(userId), loyaltyEntries: { none: { type: 'redeem_return' } }, redeemedPoints: { gt: 0 } }, _sum: { redeemedPoints: true } });
     return (sum._sum.points ?? 0) + (expired._sum.redeemedPoints ?? 0);
   }
 
@@ -65,6 +64,8 @@ export class LoyaltyService {
    * verificada. Idempotente. Devolve true quando creditou agora.
    */
   async earnForOrder(tx: PrismaTx, orderId: string): Promise<boolean> {
+    // O cashback (ficha 15) segue o mesmo ciclo do pedido (entregue + pago) e é creditado junto com os pontos.
+    await this.benefits.earnForOrder(tx, orderId);
     const order = await tx.order.findUnique({
       where: { id: orderId },
       select: { userId: true, status: true, totalCents: true, tabSettledAt: true, payments: { where: { status: 'approved' }, select: { id: true }, take: 1 } },
@@ -87,6 +88,8 @@ export class LoyaltyService {
    * Idempotente por (pedido, tipo).
    */
   async revertForOrder(tx: PrismaTx, orderId: string): Promise<void> {
+    // Cashback usado/ganho e cupom do mesmo pedido voltam junto com os pontos (fichas 15 e 56).
+    await this.benefits.revertForOrder(tx, orderId);
     const entries = await tx.loyaltyLedgerEntry.findMany({ where: { orderId }, select: { userId: true, type: true, points: true } });
     const userId = entries[0]?.userId;
     if (!userId) return;
@@ -107,21 +110,9 @@ export class LoyaltyService {
     }
   }
 
-  private expiredHoldWhere(userId: string): Prisma.OrderWhereInput {
-    return {
-      userId,
-      status: 'received',
-      redeemedPoints: { gt: 0 },
-      createdAt: { lt: new Date(Date.now() - UNPAID_HOLD_MS) },
-      payments: { none: { status: { in: ['pending', 'approved'] } } },
-      tabId: null,
-      loyaltyEntries: { none: { type: 'redeem_return' } },
-    };
-  }
-
   /** Pedidos não pagos e vencidos soltam os pontos resgatados (cancelamento por expiração). */
   async releaseExpired(userId: string): Promise<void> {
-    const stale = await this.prisma.order.findMany({ where: this.expiredHoldWhere(userId), select: { id: true } });
+    const stale = await this.prisma.order.findMany({ where: expiredHoldWhere(userId), select: { id: true } });
     for (const { id } of stale) {
       await this.prisma.$transaction(async tx => {
         await lockResource(tx, `order:${id}`);

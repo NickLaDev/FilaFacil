@@ -1,5 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, IsUrl, IsUUID, Length, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUrl, IsUUID, Length, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ALLERGEN_KEYS } from '@filafacil/shared';
 import { Trim } from '../../../common/validation/transforms.js';
 
 export const MAX_PRICE_CENTS = 1_000_000;
@@ -43,6 +44,45 @@ export class CreateMenuItemDto {
   @ValidateIf((_, value) => value !== null)
   @IsUUID()
   stationId?: string | null;
+
+  /** Ficha 64: alérgenos que o item contém (chaves do catálogo). */
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsIn(ALLERGEN_KEYS, { each: true })
+  allergens?: string[];
+}
+
+export class DuplicateMenuItemDto {
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @Length(1, 80)
+  name?: string;
+
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @MaxLength(200)
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(MAX_PRICE_CENTS)
+  priceCents?: number;
+
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @Length(1, 40)
+  categoryName?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsIn(ALLERGEN_KEYS, { each: true })
+  allergens?: string[];
 }
 
 export class UpdateMenuItemDto extends PartialType(CreateMenuItemDto) {}
