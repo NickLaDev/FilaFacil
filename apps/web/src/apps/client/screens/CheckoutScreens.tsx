@@ -9,8 +9,9 @@ import { formatPhone } from '@/lib/validation';
 import { useRestaurantData } from '@/services/restaurantService';
 import { CardError, isCardPaymentConfigured, tokenizeCard, type CardInput } from '@/services/mercadoPago';
 import { useAuthProviders } from '@/services/authService';
-import { discountForPoints, maxRedeemablePoints, LOYALTY_REDEEM_BLOCK_POINTS } from '@filafacil/shared';
+import { discountForPoints, maxRedeemablePoints, LOYALTY_REDEEM_BLOCK_POINTS, MIN_NET_CENTS, CARD_BRAND_LABELS, type CouponValidationDto, type SavedPaymentMethodDto } from '@filafacil/shared';
 import { useLoyalty } from '@/services/clientExtrasService';
+import { useCashback, usePaymentMethods, validateCoupon } from '@/services/sprint4Service';
 import { queryClient } from '@/lib/api/queryClient';
 import { checkoutAttempt, createOrder, finishCheckout, formatEstimate, ordersKey, payOrder, simulatePixPayment, syncOrderPayment, useOrder } from '@/services/orderService';
 import type { CreatePaymentRequest, OrderDto, PaymentMethod } from '@/types/order';
@@ -186,7 +187,16 @@ export function PaymentScreen() {
   const [pendingOrder, setPendingOrder] = useState<OrderDto | null>(null);
   const [scenario, setScenario] = useState<SimulatedScenario>('sim_approved');
   const [redeemPoints, setRedeemPoints] = useState(0);
+  // Ficha 56 (cupom), ficha 15 (cashback) e ficha 49 (cartão salvo).
+  const [couponInput, setCouponInput] = useState('');
+  const [couponState, setCouponState] = useState<{ coupon: CouponValidationDto; subtotalCents: number } | null>(null);
+  const [couponError, setCouponError] = useState('');
+  const [couponChecking, setCouponChecking] = useState(false);
+  const [useCashback_, setUseCashback] = useState(false);
+  const [savedMethodId, setSavedMethodId] = useState<string | null | undefined>(undefined);
   const loyalty = useLoyalty(Boolean(account)).data;
+  const cashback = useCashback(Boolean(account)).data;
+  const savedMethods = usePaymentMethods(Boolean(account)).data;
   const provider = useAuthProviders().data?.paymentProvider;
   const simulated = provider === 'simulated';
   const paymentUnavailable = provider === 'none';
@@ -260,6 +270,23 @@ export function PaymentScreen() {
     );
   }
 
+  /** Ficha 56: confere o cupom no servidor para o subtotal atual; a mensagem do servidor vai direto ao cliente. */
+  async function applyCoupon() {
+    if (!establishment || !couponInput.trim()) return;
+    setCouponChecking(true);
+    setCouponError('');
+    try {
+      const subtotal = Math.round(total * 100);
+      const result = await validateCoupon({ establishmentId: establishment.id, code: couponInput.trim(), subtotalCents: subtotal });
+      setCouponState({ coupon: result, subtotalCents: subtotal });
+    } catch (failure) {
+      setCouponState(null);
+      setCouponError(errorMessage(failure, 'Não foi possível validar o cupom.'));
+    } finally {
+      setCouponChecking(false);
+    }
+  }
+
   function validateCard() {
     if (!isValidCardNumber(card.number)) return 'Número do cartão inválido.';
     if (card.holder.trim().length < 3) return 'Informe o nome impresso no cartão.';
@@ -279,7 +306,11 @@ export function PaymentScreen() {
   async function pay() {
     if (!account || !establishment) return;
     let request: CreatePaymentRequest = { method };
-    if (method !== 'pix' && simulated) {
+    if (method !== 'pix' && activeSaved) {
+      // Ficha 49: cartão salvo — nenhum dado de cartão é digitado nem enviado; o servidor usa o token do cofre.
+      request = { method, savedMethodId: activeSaved.id };
+      setView('processing');
+    } else if (method !== 'pix' && simulated) {
       // Demonstração: o cenário escolhido vai no lugar do token do cartão (nenhum dado de cartão existe).
       request = { method, cardToken: scenario, paymentMethodId: 'simulated' };
       setView('processing');
@@ -302,10 +333,14 @@ export function PaymentScreen() {
     // O total exibido vai junto no pedido e no pagamento: se o servidor tiver outro valor, nada é cobrado. O total
     // também compõe o resumo do carrinho, então preço novo = nova tentativa (outro pedido), nunca o pedido velho.
     const subtotalCents = Math.round(total * 100);
-    // Ficha 14: o resgate vale só se o servidor também aceitar (saldo, múltiplo de 100, total líquido ≥ R$ 1,00).
-    const redeem = loyalty?.eligible ? Math.min(redeemPoints, maxRedeemablePoints(loyalty.balancePoints, subtotalCents)) : 0;
-    const totalCents = subtotalCents - discountForPoints(redeem);
-    const signature = JSON.stringify([cartEstablishmentId, table?.tableId, totalCents, redeem, cart.map(line => [line.itemId, line.quantity, line.notes])]);
+    // Cupom (ficha 56) → pontos (ficha 14) → cashback (ficha 15): cada desconto respeita o líquido mínimo; o servidor confere tudo.
+    const coupon = couponState?.subtotalCents === subtotalCents ? couponState.coupon : null;
+    const couponCents = coupon?.discountCents ?? 0;
+    const redeem = loyalty?.eligible ? Math.min(redeemPoints, maxRedeemablePoints(loyalty.balancePoints, subtotalCents - couponCents)) : 0;
+    const afterPoints = subtotalCents - couponCents - discountForPoints(redeem);
+    const cashbackCents = useCashback_ ? Math.min(cashback?.balanceCents ?? 0, Math.max(afterPoints - MIN_NET_CENTS, 0)) : 0;
+    const totalCents = afterPoints - cashbackCents;
+    const signature = JSON.stringify([cartEstablishmentId, table?.tableId, totalCents, redeem, couponCents ? coupon?.code : null, cashbackCents, cart.map(line => [line.itemId, line.quantity, line.notes])]);
     const attempt = checkoutAttempt(signature);
     try {
       const orderId =
@@ -317,6 +352,8 @@ export function PaymentScreen() {
             clientRequestId: attempt.clientRequestId,
             expectedTotalCents: totalCents,
             ...(redeem > 0 && { redeemPoints: redeem }),
+            ...(cashbackCents > 0 && { useCashbackCents: cashbackCents }),
+            ...(couponCents > 0 && coupon && { couponCode: coupon.code }),
             items: lines.map(line => ({ menuItemId: line.itemId, quantity: line.quantity, notes: line.notes })),
           })
         ).id;
@@ -332,7 +369,7 @@ export function PaymentScreen() {
       fail(status === 'refused' ? refusalMessage(order.payment?.failureReason ?? null) : 'O pagamento não foi concluído.');
     } catch (failure) {
       // Conflitos com o pedido guardado: o servidor explica e o próximo envio começa um pedido novo.
-      for (const code of ['PRICE_CHANGED', 'ORDER_TOTAL_CHANGED', 'ORDER_CONTENT_CHANGED', 'ORDER_EXPIRED', 'ITEM_UNAVAILABLE', 'ESTABLISHMENT_NOT_ACCEPTING_ORDERS']) {
+      for (const code of ['COUPON_INVALID', 'COUPON_INACTIVE', 'COUPON_NOT_STARTED', 'COUPON_EXPIRED', 'COUPON_MIN_ORDER', 'COUPON_ALREADY_USED', 'COUPON_EXHAUSTED', 'INVALID_CASHBACK', 'INVALID_REDEEM', 'PRICE_CHANGED', 'ORDER_TOTAL_CHANGED', 'ORDER_CONTENT_CHANGED', 'ORDER_EXPIRED', 'ITEM_UNAVAILABLE', 'ESTABLISHMENT_NOT_ACCEPTING_ORDERS']) {
         if (isApiError(failure, code)) return fail(failure.message, { newOrder: true });
       }
       if (isApiError(failure, 'ALREADY_PAID') || isApiError(failure, 'ORDER_NOT_PAYABLE')) {
@@ -350,10 +387,19 @@ export function PaymentScreen() {
   ];
   const cardUnavailable = method !== 'pix' && !simulated && !isCardPaymentConfigured;
   const subtotalCents = Math.round(total * 100);
-  const maxRedeem = loyalty?.eligible ? maxRedeemablePoints(loyalty.balancePoints, subtotalCents) : 0;
+  // O desconto do cupom só vale para o subtotal em que foi conferido: mudou o carrinho, confere de novo.
+  const coupon = couponState?.subtotalCents === subtotalCents ? couponState.coupon : null;
+  const couponCents = coupon?.discountCents ?? 0;
+  const maxRedeem = loyalty?.eligible ? maxRedeemablePoints(loyalty.balancePoints, subtotalCents - couponCents) : 0;
   const appliedRedeem = Math.min(redeemPoints, maxRedeem);
   const redeemDiscountCents = discountForPoints(appliedRedeem);
-  const payableCents = subtotalCents - redeemDiscountCents;
+  const afterPointsCents = subtotalCents - couponCents - redeemDiscountCents;
+  const maxCashback = Math.min(cashback?.balanceCents ?? 0, Math.max(afterPointsCents - MIN_NET_CENTS, 0));
+  const cashbackDiscountCents = useCashback_ ? maxCashback : 0;
+  const payableCents = afterPointsCents - cashbackDiscountCents;
+  // Cartão salvo: o escolhido, ou o padrão (pré-selecionado no checkout seguinte, sem pedir os dados de novo).
+  const usableMethods = (savedMethods ?? []).filter(item => item.kind === method && !item.expired);
+  const activeSaved: SavedPaymentMethodDto | null = method === 'pix' || savedMethodId === null ? null : usableMethods.find(item => item.id === savedMethodId) ?? usableMethods.find(item => item.isDefault) ?? usableMethods[0] ?? null;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -382,7 +428,22 @@ export function PaymentScreen() {
           </button>
         ))}
 
-        {simulated && <SimulationBanner />}
+        {method !== 'pix' && usableMethods.length > 0 && (
+          <fieldset data-testid="saved-methods" className="bg-card rounded-xl border border-border p-4 flex flex-col gap-2">
+            <legend className="text-xs uppercase tracking-wider text-muted-foreground font-medium px-1">Seus cartões salvos</legend>
+            {usableMethods.map(item => (
+              <label key={item.id} className={cn('flex items-center gap-3 rounded-lg border p-3 cursor-pointer', activeSaved?.id === item.id ? 'border-primary bg-primary/5' : 'border-border')}>
+                <input type="radio" name="saved-method" checked={activeSaved?.id === item.id} onChange={() => setSavedMethodId(item.id)} className="accent-primary" />
+                <span className="text-sm text-foreground">{CARD_BRAND_LABELS[item.brand]} •••• {item.last4}{item.isDefault ? ' · padrão' : ''}</span>
+              </label>
+            ))}
+            <label className={cn('flex items-center gap-3 rounded-lg border p-3 cursor-pointer', !activeSaved ? 'border-primary bg-primary/5' : 'border-border')}>
+              <input type="radio" name="saved-method" checked={!activeSaved} onChange={() => setSavedMethodId(null)} className="accent-primary" />
+              <span className="text-sm text-foreground">Usar outro cartão</span>
+            </label>
+          </fieldset>
+        )}
+        {simulated && !activeSaved && <SimulationBanner />}
         {paymentUnavailable && (
           <div className="bg-warning-bg border border-warning/20 rounded-xl p-4 flex gap-2">
             <AlertTriangle size={15} className="text-warning flex-shrink-0 mt-0.5" />
@@ -398,6 +459,11 @@ export function PaymentScreen() {
                 : 'O QR Code e o código Pix copia e cola aparecem na próxima etapa, depois de confirmar.'}
             </p>
           </div>
+        ) : activeSaved ? (
+          <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
+            <CreditCard size={20} className="text-primary flex-shrink-0" />
+            <p className="text-sm text-muted-foreground">Vamos cobrar no {CARD_BRAND_LABELS[activeSaved.brand]} final {activeSaved.last4}. Nenhum dado de cartão é pedido de novo.</p>
+          </div>
         ) : simulated ? (
           <ScenarioSelector value={scenario} onChange={setScenario} />
         ) : cardUnavailable ? (
@@ -407,6 +473,32 @@ export function PaymentScreen() {
           </div>
         ) : (
           <CardForm card={card} onChange={next => { setCard(next); setCardError(''); }} error={cardError} />
+        )}
+
+        <div data-testid="coupon-box" className="bg-card rounded-xl border border-border p-4 flex flex-col gap-2">
+          <label htmlFor="coupon-code" className="text-sm font-display font-semibold text-foreground">Cupom de desconto</label>
+          {coupon && couponCents > 0 ? (
+            <div className="flex items-center justify-between gap-3 bg-success-bg rounded-lg px-3 py-2">
+              <p data-testid="coupon-applied" className="text-sm text-success font-medium">{coupon.code} aplicado · -{formatCents(coupon.discountCents)}</p>
+              <button onClick={() => { setCouponState(null); setCouponInput(''); }} className="text-xs text-muted-foreground" aria-label="Remover cupom"><X size={14} /></button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <input id="coupon-code" data-testid="coupon-input" value={couponInput} onChange={event => { setCouponInput(event.target.value.toUpperCase().slice(0, 32)); setCouponError(''); }} placeholder="Digite o código" autoCapitalize="characters" className="flex-1 bg-muted rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+              <button onClick={() => void applyCoupon()} disabled={!couponInput.trim() || couponChecking} data-testid="coupon-apply" className="bg-primary text-primary-foreground text-sm font-medium px-4 rounded-lg disabled:opacity-50">{couponChecking ? '…' : 'Aplicar'}</button>
+            </div>
+          )}
+          {couponError && <p role="alert" data-testid="coupon-error" className="text-error text-xs">{couponError}</p>}
+        </div>
+
+        {(cashback?.balanceCents ?? 0) > 0 && (
+          <div data-testid="cashback-box" className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
+            <input id="use-cashback" type="checkbox" checked={useCashback_ && maxCashback > 0} disabled={maxCashback <= 0} onChange={event => setUseCashback(event.target.checked)} className="accent-primary w-4 h-4" />
+            <label htmlFor="use-cashback" className="flex-1 text-sm text-foreground">
+              Usar meu cashback <span className="text-muted-foreground">(saldo {formatCents(cashback?.balanceCents ?? 0)})</span>
+            </label>
+            {maxCashback > 0 && <span className="text-xs text-success font-medium">-{formatCents(maxCashback)}</span>}
+          </div>
         )}
 
         {maxRedeem > 0 && (
@@ -424,8 +516,14 @@ export function PaymentScreen() {
 
         <div className="bg-card rounded-xl border border-border p-4 flex flex-col gap-2">
           <div className="flex justify-between text-sm"><span className="text-muted-foreground">{count} {count === 1 ? 'item' : 'itens'}</span><span>{formatCurrency(total)}</span></div>
+          {couponCents > 0 && (
+            <div className="flex justify-between text-sm text-success"><span>Cupom {coupon?.code}</span><span data-testid="coupon-discount">-{formatCents(couponCents)}</span></div>
+          )}
           {redeemDiscountCents > 0 && (
             <div className="flex justify-between text-sm text-success"><span>Desconto FilaZero Club</span><span data-testid="redeem-discount">-{formatCents(redeemDiscountCents)}</span></div>
+          )}
+          {cashbackDiscountCents > 0 && (
+            <div className="flex justify-between text-sm text-success"><span>Cashback</span><span data-testid="cashback-discount">-{formatCents(cashbackDiscountCents)}</span></div>
           )}
           <div className="border-t border-border pt-2 flex justify-between">
             <span className="font-display font-bold text-foreground">Total</span>

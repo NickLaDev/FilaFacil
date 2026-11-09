@@ -46,6 +46,20 @@ export class CreateOrderDto {
   @Max(1_000_000)
   redeemPoints?: number;
 
+  /** Ficha 15: saldo de cashback a usar, em centavos. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  useCashbackCents?: number;
+
+  /** Ficha 56: código do cupom de desconto. */
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @MaxLength(40)
+  couponCode?: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(MAX_ORDER_LINES)
@@ -69,6 +83,11 @@ export class CreatePaymentDto {
   @IsString()
   @Length(2, 40)
   paymentMethodId?: string;
+
+  /** Ficha 49: cartão salvo do próprio usuário (o servidor resolve o token). */
+  @IsOptional()
+  @IsUUID()
+  savedMethodId?: string;
 
   /** Total que o cliente viu na tela de pagamento. */
   @IsOptional()

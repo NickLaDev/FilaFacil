@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { BookOpen, Edit3, ImageOff, Plus, Search, Star, Trash2, X } from 'lucide-react';
+import { BookOpen, Copy, Edit3, ImageOff, Plus, Search, Star, Trash2, X } from 'lucide-react';
+import { allergenLabel } from '@filafacil/shared';
 import EmptyState from '@/components/ui/EmptyState';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { useAsyncAction } from '@/lib/useAsyncAction';
@@ -34,6 +35,7 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [editing, setEditing] = useState<MenuItemView | 'new' | null>(null);
+  const [duplicating, setDuplicating] = useState<MenuItemView | null>(null);
   const [deleting, setDeleting] = useState<MenuItemView | null>(null);
 
   const categories = getCategories(items);
@@ -145,6 +147,7 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
                       )}
                       <div className="min-w-0">
                         <p className="font-medium text-foreground text-sm">{item.name}</p>
+                        {item.allergens.length > 0 && <p className="text-[10px] text-muted-foreground">Contém: {item.allergens.map(allergenLabel).join(', ')}</p>}
                         {badgeIds.has(item.id) && (
                           <span className="text-[10px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-md">+ pedido</span>
                         )}
@@ -178,6 +181,9 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
                       >
                         <Star size={14} className={featuredIds.has(item.id) ? 'fill-primary text-primary' : ''} />
                       </button>
+                      <button onClick={() => setDuplicating(item)} title="Duplicar item" aria-label={`Duplicar ${item.name}`} data-testid={`duplicate-${item.id}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground">
+                        <Copy size={14} />
+                      </button>
                       <button onClick={() => setEditing(item)} aria-label={`Editar ${item.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground">
                         <Edit3 size={14} />
                       </button>
@@ -208,6 +214,9 @@ export default function MenuSection({ unit, notify }: ManagerSectionProps) {
           onClose={() => setEditing(null)}
           notify={notify}
         />
+      )}
+      {duplicating && (
+        <MenuItemFormModal establishmentId={unit.id} duplicateOf={duplicating} categories={categories} onClose={() => setDuplicating(null)} notify={notify} />
       )}
       {deleting && (
         <ConfirmDialog

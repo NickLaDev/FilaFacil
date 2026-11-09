@@ -42,6 +42,7 @@ export class MeService {
       where: { id: userId },
       data: {
         name: dto.name,
+        ...(dto.dietaryRestrictions !== undefined && { dietaryRestrictions: dto.dietaryRestrictions }),
         email,
         phone,
         ...(email !== current.email && { emailVerifiedAt: null }),

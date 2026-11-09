@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ChevronLeft, Eye, Minus, Plus, Search, X } from 'lucide-react';
+import { ChevronLeft, Eye, Minus, Plus, Search, ShieldAlert, X } from 'lucide-react';
+import { allergenLabel, restrictedAllergens } from '@filafacil/shared';
+import BottomSheet from '@/components/ui/BottomSheet';
 import { imageOrPlaceholder } from '@/lib/images';
 import { cn, formatCurrency } from '@/lib/utils';
 import EmptyState from '@/components/ui/EmptyState';
@@ -24,6 +26,21 @@ function useClientMenu() {
   return { establishment, items, categories: menu.data?.categories ?? [], canOrder, table, error: restaurant.error ?? menu.error, retry: () => void Promise.all([restaurant.refetch(), menu.refetch()]) };
 }
 
+/** Alérgenos do item (ficha 64): os que o cliente marcou como restrição ficam em destaque. */
+function AllergenTags({ item, restrictions, className }: { item: PricedMenuItem; restrictions: string[]; className?: string }) {
+  if (item.allergens.length === 0) return null;
+  const blocked = new Set(restrictedAllergens(item.allergens, restrictions));
+  return (
+    <div className={cn('flex flex-wrap gap-1', className)} data-testid="allergen-tags">
+      {item.allergens.map(key => (
+        <span key={key} data-restricted={blocked.has(key as never) || undefined} className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded-md', blocked.has(key as never) ? 'bg-error text-white' : 'bg-muted text-muted-foreground')}>
+          {blocked.has(key as never) && '⚠ '}{allergenLabel(key)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function PriceTag({ item, className }: { item: PricedMenuItem; className?: string }) {
   return (
     <div className={cn('flex items-baseline gap-1.5', className)}>
@@ -34,8 +51,9 @@ function PriceTag({ item, className }: { item: PricedMenuItem; className?: strin
 }
 
 export function MenuScreen() {
-  const { go, cart, openItem } = useClient();
+  const { go, cart, openItem, account } = useClient();
   const { establishment, items, categories: menuCategories, canOrder, table, error, retry } = useClientMenu();
+  const restrictions = account?.dietaryRestrictions ?? [];
   const [category, setCategory] = useState(HIGHLIGHT_CATEGORY);
   const [query, setQuery] = useState('');
 
@@ -135,6 +153,7 @@ export function MenuScreen() {
               <div>
                 <p className="font-display font-semibold text-foreground text-sm leading-tight">{item.name}</p>
                 <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.description}</p>
+                <AllergenTags item={item} restrictions={restrictions} className="mt-1.5" />
               </div>
               <div className="flex items-center justify-between mt-2">
                 <PriceTag item={item} />
@@ -165,9 +184,10 @@ export function MenuScreen() {
 }
 
 export function ItemDetailScreen() {
-  const { go, selectedItemId, addToCart, showToast } = useClient();
+  const { go, selectedItemId, addToCart, showToast, account } = useClient();
   const { establishment, items, canOrder } = useClientMenu();
   const [quantity, setQuantity] = useState(1);
+  const [confirmRestricted, setConfirmRestricted] = useState(false);
   const [notes, setNotes] = useState('');
   const item = items.find(i => i.id === selectedItemId);
 
@@ -185,8 +205,16 @@ export function ItemDetailScreen() {
     );
   }
 
-  function handleAdd() {
+  const restrictions = account?.dietaryRestrictions ?? [];
+  const conflicts = item ? restrictedAllergens(item.allergens, restrictions) : [];
+
+  /** Ficha 64: item com algo que o cliente não pode comer exige confirmação antes de entrar no carrinho. */
+  function handleAdd(confirmed = false) {
     if (!item || !establishment) return;
+    if (conflicts.length > 0 && !confirmed) {
+      setConfirmRestricted(true);
+      return;
+    }
     addToCart(establishment.id, { itemId: item.id, quantity, notes: notes.trim(), name: item.name, image: item.image });
     showToast('Adicionado ao pedido');
     go('menu');
@@ -207,7 +235,14 @@ export function ItemDetailScreen() {
         <div>
           <h1 className="font-display text-xl font-bold text-foreground">{item.name}</h1>
           <p className="text-muted-foreground text-sm mt-1">{item.description}</p>
+          <AllergenTags item={item} restrictions={restrictions} className="mt-2" />
         </div>
+        {conflicts.length > 0 && (
+          <div role="alert" data-testid="allergen-warning" className="flex items-start gap-2 bg-error-bg border border-error/30 rounded-xl px-4 py-3">
+            <ShieldAlert size={16} className="text-error flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-error"><strong>Atenção:</strong> este item contém {conflicts.map(allergenLabel).join(', ')}, que você marcou como restrição.</p>
+          </div>
+        )}
         <div>
           <PriceTag item={item} className="[&>span:first-child]:text-2xl" />
           {item.promotion && (
@@ -245,6 +280,17 @@ export function ItemDetailScreen() {
           </>
         )}
       </div>
+      {confirmRestricted && (
+        <BottomSheet onClose={() => setConfirmRestricted(false)}>
+          <div className="flex flex-col items-center text-center gap-3">
+            <div className="w-14 h-14 rounded-2xl bg-error-bg flex items-center justify-center"><ShieldAlert size={28} className="text-error" /></div>
+            <p className="font-display font-bold text-foreground text-lg">Este item pode não ser seguro para você</p>
+            <p data-testid="allergen-confirm" className="text-sm text-muted-foreground">Contém {conflicts.map(allergenLabel).join(', ')}, que você marcou como restrição. Quer adicionar mesmo assim?</p>
+            <button onClick={() => setConfirmRestricted(false)} className="w-full bg-primary text-primary-foreground font-display font-semibold py-3.5 rounded-xl">Não adicionar</button>
+            <button onClick={() => { setConfirmRestricted(false); handleAdd(true); }} data-testid="allergen-add-anyway" className="text-error text-sm font-medium py-2">Adicionar mesmo assim</button>
+          </div>
+        </BottomSheet>
+      )}
       {canOrder && (
         <FixedBottom aboveNav className="flex items-center gap-3">
           <div className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3">
@@ -252,7 +298,7 @@ export function ItemDetailScreen() {
             <span className="font-display font-bold text-foreground w-5 text-center">{quantity}</span>
             <button onClick={() => setQuantity(q => Math.min(20, q + 1))} className="text-primary" aria-label="Aumentar quantidade"><Plus size={16} /></button>
           </div>
-          <button onClick={handleAdd} className="flex-1 bg-primary text-primary-foreground font-display font-semibold py-3 rounded-xl text-sm">
+          <button onClick={() => handleAdd()} data-testid="add-to-cart" className="flex-1 bg-primary text-primary-foreground font-display font-semibold py-3 rounded-xl text-sm">
             Adicionar · {formatCurrency(item.finalPrice * quantity)}
           </button>
         </FixedBottom>

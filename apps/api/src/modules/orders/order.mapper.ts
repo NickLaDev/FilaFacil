@@ -8,6 +8,7 @@ export const ORDER_INCLUDE = {
   notifications: { orderBy: { createdAt: 'asc' } },
   establishment: { select: { name: true, pickupPoint: true, averageWaitMinutes: true } },
   payments: { orderBy: { attempt: 'desc' }, take: 1 },
+  review: { select: { rating: true } },
 } satisfies Prisma.OrderInclude;
 
 export type OrderWithDetails = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
@@ -49,6 +50,12 @@ export function toOrderDto(order: OrderWithDetails): OrderDto {
     totalCents: order.totalCents,
     discountCents: order.discountCents,
     redeemedPoints: order.redeemedPoints,
+    cashbackUsedCents: order.cashbackUsedCents,
+    cashbackEarnCents: order.cashbackEarnCents,
+    couponCode: order.couponCode,
+    couponDiscountCents: order.couponDiscountCents,
+    canReview: order.status === 'delivered' && order.review === null,
+    reviewRating: order.review?.rating ?? null,
     items: order.items.map(item => ({
       menuItemId: item.menuItemId,
       name: item.name,

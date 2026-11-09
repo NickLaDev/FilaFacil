@@ -212,7 +212,7 @@ export class AdminUsersService {
         ...(added.length ? [`Permissões concedidas: ${added.map(permissionLabel).join(', ')}`] : []),
         ...(removed.length ? [`Permissões removidas: ${removed.map(permissionLabel).join(', ')}`] : []),
       ];
-      entries.push({ action: 'permissions_changed', description: parts.join(' · '), before: { permissions: current }, after: { permissions } });
+      entries.push({ action: 'permissions_changed', description: parts.join(' · ').slice(0, 2000), before: { permissions: current }, after: { permissions } });
     }
     const currentIds = user.memberships.map(m => m.establishment.id);
     if (currentIds.length !== establishmentIds.length || currentIds.some(estId => !establishmentIds.includes(estId))) {

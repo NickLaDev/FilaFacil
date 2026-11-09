@@ -4,6 +4,7 @@ import type { OrderDto, PaymentStatus } from '@filafacil/shared';
 import { AppError, badRequest, conflict, forbidden, notFound, serviceUnavailable, unprocessable } from '../../common/http/app-error.js';
 import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
+import { PaymentMethodsService } from '../payment-methods/payment-methods.service.js';
 import type { Payment } from '../../generated/prisma/client.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { GatewayError, PaymentGateway, type GatewayPayment, type WebhookRequest } from '../payments/payment-gateway.js';
@@ -64,11 +65,19 @@ export class OrderPaymentsService {
     private readonly orders: OrdersService,
     private readonly effects: OrderEffectsService,
     private readonly alerts: AlertsService,
+    private readonly savedMethods: PaymentMethodsService,
   ) {}
 
   // ─── Cliente: pagar ───────────────────────────────────────────────────────
 
-  async create(auth: AuthContext, orderId: string, dto: CreatePaymentDto): Promise<OrderDto> {
+  async create(auth: AuthContext, orderId: string, input: CreatePaymentDto): Promise<OrderDto> {
+    let dto = input;
+    // Ficha 49: cartão salvo — o servidor troca o id pelo token do cofre; nenhum dado de cartão trafega.
+    if (input.savedMethodId) {
+      if (input.method === 'pix') throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [{ field: 'savedMethodId', message: 'Cartão salvo só vale para crédito ou débito.' }]);
+      const saved = await this.savedMethods.resolveForPayment(auth.userId, input.savedMethodId, input.method);
+      dto = { ...input, cardToken: saved.token, paymentMethodId: saved.brand };
+    }
     if (!this.gateway.available) throw serviceUnavailable('PAYMENT_UNAVAILABLE', 'O pagamento pelo app não está disponível no momento.');
     if (dto.method !== 'pix' && (!dto.cardToken || !dto.paymentMethodId)) {
       throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [{ field: 'cardToken', message: 'Informe os dados do cartão.' }]);

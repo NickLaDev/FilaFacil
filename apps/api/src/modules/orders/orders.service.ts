@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { discountForPoints, STAFF_ORDER_TRANSITIONS, type OrderDto, type OrderQueueDto, type OrderQueuePositionDto, type OrderStatus, type Page, type StaffOrderDto } from '@filafacil/shared';
+import { discountForPoints, normalizeCouponCode, STAFF_ORDER_TRANSITIONS, type OrderDto, type OrderQueueDto, type OrderQueuePositionDto, type OrderStatus, type Page, type StaffOrderDto } from '@filafacil/shared';
 import { conflict, forbidden, notFound, unprocessable } from '../../common/http/app-error.js';
 import { pageArgs, toPage } from '../../common/pagination/page-query.dto.js';
 import { bestPromotion, finalPriceCents } from '../../common/pricing.js';
@@ -12,6 +12,7 @@ import type { AuthContext } from '../auth/auth.types.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import { RestaurantsService } from '../restaurants/restaurants.service.js';
 import type { CreateOrderDto, QueueQueryDto, StaffOrdersQueryDto } from './dto/orders.dto.js';
+import { BenefitsService } from '../benefits/benefits.service.js';
 import { LoyaltyService } from '../loyalty/loyalty.service.js';
 import { OrderEffectsService } from './order-effects.service.js';
 import { ageMinutes, estimateOf, ORDER_INCLUDE, toOrderDto, toStaffOrderDto, type OrderWithDetails } from './order.mapper.js';
@@ -34,6 +35,7 @@ export class OrdersService {
     private readonly realtime: RealtimeService,
     private readonly effects: OrderEffectsService,
     private readonly loyalty: LoyaltyService,
+    private readonly benefits: BenefitsService,
   ) {}
 
   // ─── Cliente ──────────────────────────────────────────────────────────────
@@ -59,15 +61,21 @@ export class OrdersService {
       : null;
     if (dto.tableId && !table) throw unprocessable('INVALID_TABLE', 'Esta mesa não pertence ao restaurante do pedido.');
 
-    const lines = await this.priceLines(establishment.id, dto.items, new Date());
+    const now = new Date();
+    const lines = await this.priceLines(establishment.id, dto.items, now);
     const subtotalCents = lines.reduce((sum, line) => sum + line.unitPriceCents * line.quantity, 0);
     const redeemPoints = dto.redeemPoints ?? 0;
-    // O total que o cliente viu já vem líquido do desconto de pontos (ficha 14).
-    const expectedNet = subtotalCents - discountForPoints(redeemPoints);
+    const cashbackUse = dto.useCashbackCents ?? 0;
+    const couponCode = dto.couponCode?.trim() ? normalizeCouponCode(dto.couponCode) : null;
+    // Pedido antigo não pago ainda segura pontos, cashback ou cupom: solta antes de conferir saldos e usos.
+    if (redeemPoints > 0 || cashbackUse > 0 || couponCode) await this.loyalty.releaseExpired(auth.userId);
+    const couponPreview = couponCode ? await this.benefits.resolveCoupon(this.prisma, { userId: auth.userId, establishmentId: establishment.id, code: couponCode, subtotalCents, now }) : null;
+    const afterCoupon = subtotalCents - (couponPreview?.discountCents ?? 0);
+    // O total que o cliente viu já vem líquido de cupom, pontos (ficha 14) e cashback (ficha 15).
+    const expectedNet = afterCoupon - discountForPoints(redeemPoints) - cashbackUse;
     if (dto.expectedTotalCents !== undefined && dto.expectedTotalCents !== expectedNet) {
       throw conflict('PRICE_CHANGED', 'Os preços mudaram desde que você montou o pedido. Revise o carrinho.');
     }
-    if (redeemPoints > 0) await this.loyalty.releaseExpired(auth.userId);
 
     try {
       const created = await this.prisma.$transaction(async tx => {
@@ -83,14 +91,48 @@ export class OrdersService {
             items: { create: lines },
           },
         });
+        let total = subtotalCents;
+        let couponDiscountCents = 0;
+        let couponId: string | null = null;
+        if (couponCode) {
+          const redeemed = await this.benefits.redeemCoupon(tx, { userId: auth.userId, orderId: order.id, establishmentId: establishment.id, code: couponCode, subtotalCents });
+          if (redeemed.discountCents !== (couponPreview?.discountCents ?? 0)) throw conflict('PRICE_CHANGED', 'O desconto do cupom mudou. Revise o carrinho.');
+          couponDiscountCents = redeemed.discountCents;
+          couponId = redeemed.coupon.id;
+          total -= couponDiscountCents;
+        }
+        let discountCents = 0;
         if (redeemPoints > 0) {
-          const discountCents = await this.loyalty.reserveRedeem(tx, auth.userId, order.id, redeemPoints, subtotalCents);
-          await tx.order.update({ where: { id: order.id }, data: { discountCents, redeemedPoints: redeemPoints, totalCents: subtotalCents - discountCents } });
+          discountCents = await this.loyalty.reserveRedeem(tx, auth.userId, order.id, redeemPoints, total);
+          total -= discountCents;
+        }
+        if (cashbackUse > 0) {
+          await this.benefits.reserveCashback(tx, auth.userId, order.id, cashbackUse, total);
+          total -= cashbackUse;
+        }
+        // Cashback a ganhar: congelado agora (regra vigente), creditado quando o pedido for entregue e pago.
+        const earn = await this.benefits.cashbackForOrder(tx, { establishmentId: establishment.id, lines, subtotalCents, netCents: total, now });
+        if (total !== subtotalCents || earn.cents > 0) {
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              totalCents: total,
+              discountCents,
+              redeemedPoints: redeemPoints,
+              cashbackUsedCents: cashbackUse,
+              couponId,
+              couponCode: couponId ? couponCode : null,
+              couponDiscountCents,
+              cashbackEarnCents: earn.cents,
+              cashbackRuleId: earn.ruleId,
+            },
+          });
         }
         return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
       });
       this.realtime.orderUpdated(auth.userId, establishment.id, created.id);
       if (redeemPoints > 0) this.loyalty.notify(auth.userId);
+      if (cashbackUse > 0) this.realtime.cashbackUpdated(auth.userId);
       return toOrderDto(created);
     } catch (error) {
       // Duas requisições simultâneas com o mesmo identificador: o índice único decide, a outra reaproveita.
@@ -116,6 +158,8 @@ export class OrdersService {
       existing.establishmentId !== dto.establishmentId ||
       (existing.tableId ?? null) !== (dto.tableId ?? null) ||
       existing.redeemedPoints !== (dto.redeemPoints ?? 0) ||
+      existing.cashbackUsedCents !== (dto.useCashbackCents ?? 0) ||
+      (existing.couponCode ?? '') !== (dto.couponCode?.trim() ? normalizeCouponCode(dto.couponCode) : '') ||
       signature(existing.items) !== signature(dto.items.map(item => ({ ...item, notes: (item.notes ?? '').slice(0, MAX_NOTES_LENGTH) })))
     ) {
       throw conflict('ORDER_CONTENT_CHANGED', 'O carrinho mudou desde o último pedido. Revise o carrinho e confirme de novo.');
@@ -321,7 +365,7 @@ export class OrdersService {
     this.realtime.orderUpdated(order.userId, establishmentId, order.id);
     if (status === 'preparing') await this.effects.afterPreparing(establishmentId, order.id);
     if (status === 'ready') await this.effects.afterReady({ id: order.id, userId: order.userId, establishmentId });
-    if (status === 'delivered') this.effects.afterDelivered(order.userId);
+    if (status === 'delivered') this.effects.afterDelivered({ id: order.id, userId: order.userId, establishmentId });
     return this.getForStaff(establishmentId, order.id);
   }
 

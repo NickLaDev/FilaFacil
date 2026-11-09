@@ -2,6 +2,7 @@
  * Seed de desenvolvimento (idempotente): IDs fixos + upsert. Rodar de novo restaura os dados de
  * demonstração sem apagar o que foi criado pela interface. Credenciais documentadas no README.
  */
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -544,12 +545,93 @@ async function seedFloorAndWaitlist() {
   }
 }
 
+/** Chave do dispositivo da integração de demonstração (só desenvolvimento): `X-Integration-Key` no heartbeat. */
+export const DEV_INTEGRATION_KEY = 'ik_dev_pdv_caixa1_demo_key';
+
+/** Sprint 4: cashback, cupons, alérgenos, lotes com validade, integração, faturas e chamado de suporte (demonstração). */
+async function seedSprint4() {
+  const establishmentId = SEED_IDS.establishment(1);
+
+  const rules = [
+    { n: 1, name: '5% de volta em todo pedido', percent: 5, promotionId: null },
+    { n: 2, name: 'Happy Hour: 10% de volta', percent: 10, promotionId: id(10, 1) },
+  ];
+  for (const rule of rules) {
+    const ruleId = id(15, rule.n);
+    const data = { establishmentId, name: rule.name, percent: rule.percent, promotionId: rule.promotionId, active: true };
+    await prisma.cashbackRule.upsert({ where: { id: ruleId }, create: { id: ruleId, ...data }, update: data });
+  }
+
+  const coupons = [
+    { n: 1, code: 'BEMVINDO10', description: 'Boas-vindas: 10% no primeiro pedido', type: 'percent' as const, value: 10, start: -DAY, end: 90 * DAY },
+    { n: 2, code: 'ECONOMIZE5', description: 'R$ 5,00 em pedidos a partir de R$ 30,00', type: 'fixed' as const, value: 500, min: 3000, start: -DAY, end: 60 * DAY },
+    { n: 3, code: 'VERAO24', description: 'Campanha encerrada (exemplo de cupom expirado)', type: 'percent' as const, value: 20, start: -90 * DAY, end: -30 * DAY },
+  ];
+  for (const coupon of coupons) {
+    const couponId = id(16, coupon.n);
+    const data = { establishmentId, code: coupon.code, description: coupon.description, discountType: coupon.type, discountValue: coupon.value, minOrderCents: coupon.min ?? 0, startsAt: at(coupon.start), endsAt: at(coupon.end), maxUses: null, active: true };
+    await prisma.coupon.upsert({ where: { id: couponId }, create: { id: couponId, ...data }, update: data });
+  }
+
+  // Alérgenos de alguns itens (ficha 64): o cliente com a restrição cadastrada é avisado.
+  const allergens: [number, string[]][] = [[1, ['gluten', 'lactose']], [5, ['gluten', 'lactose', 'pork']], [7, ['gluten']]];
+  for (const [n, list] of allergens) await prisma.menuItem.updateMany({ where: { id: SEED_IDS.item(n), establishmentId }, data: { allergens: list } });
+
+  // Lotes (ficha 70): um perto de vencer, um dentro do prazo e um já vencido.
+  const lots = [
+    { n: 1, ingredient: 1, code: 'L-2411-A', days: 5 },
+    { n: 2, ingredient: 2, code: 'L-2411-B', days: 25 },
+    { n: 3, ingredient: 3, code: 'L-2410-C', days: -1 },
+  ];
+  const dateOnly = (days: number) => new Date(`${new Date(now + days * DAY).toISOString().slice(0, 10)}T00:00:00Z`);
+  for (const lot of lots) {
+    const ingredient = await prisma.ingredient.findUnique({ where: { id: id(11, lot.ingredient) }, select: { id: true } });
+    if (!ingredient) continue;
+    const lotId = id(18, lot.n);
+    const data = { ingredientId: ingredient.id, code: lot.code, expiresOn: dateOnly(lot.days), closedAt: null };
+    await prisma.ingredientLot.upsert({ where: { id: lotId }, create: { id: lotId, ...data }, update: data });
+  }
+
+  // Integração de demonstração (ficha 33): sem sinal até alguém mandar o primeiro heartbeat.
+  const integrationData = { establishmentId, name: 'PDV Caixa 1', kind: 'pdv' as const, keyHash: createHash('sha256').update(DEV_INTEGRATION_KEY).digest('hex') };
+  await prisma.integration.upsert({ where: { id: id(19, 1) }, create: { id: id(19, 1), ...integrationData }, update: { keyHash: integrationData.keyHash } });
+
+  // Faturas anteriores (ficha 38): uma paga e uma atrasada, para a tela de pagamentos não nascer vazia.
+  const previous = new Date(Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth() - 1, 10));
+  const period = previous.toISOString().slice(0, 7);
+  const invoices = [
+    { n: 1, est: 1, status: 'paid' as const },
+    { n: 2, est: 2, status: 'overdue' as const },
+  ];
+  for (const invoice of invoices) {
+    const estId = SEED_IDS.establishment(invoice.est);
+    const estPlan = await prisma.establishment.findUnique({ where: { id: estId }, select: { plan: { select: { name: true, monthlyPriceCents: true } } } });
+    if (!estPlan || estPlan.plan.monthlyPriceCents <= 0) continue;
+    const data = { establishmentId: estId, period, planName: estPlan.plan.name, amountCents: estPlan.plan.monthlyPriceCents, dueDate: previous, status: invoice.status, paidAt: invoice.status === 'paid' ? at(-25 * DAY) : null };
+    await prisma.invoice.upsert({ where: { id: id(20, invoice.n) }, create: { id: id(20, invoice.n), ...data }, update: data });
+  }
+
+  // Chamado de suporte aberto pela casa (ficha 39).
+  const ticketId = id(21, 1);
+  await prisma.supportTicket.upsert({
+    where: { id: ticketId },
+    create: { id: ticketId, establishmentId, createdById: SEED_IDS.user(2), subject: 'Impressora da cozinha não imprime', priority: 'high', status: 'open' },
+    update: {},
+  });
+  await prisma.supportMessage.upsert({
+    where: { id: id(22, 1) },
+    create: { id: id(22, 1), ticketId, authorId: SEED_IDS.user(2), authorName: 'Lucas Torres', side: 'establishment', body: 'Desde cedo a impressora da cozinha não imprime os pedidos. Já reiniciamos duas vezes.' },
+    update: {},
+  });
+}
+
 async function main() {
   await seedPlansAndOrganizations();
   await seedEstablishments();
   await seedUsers();
   await seedMenu();
   await seedFloorAndWaitlist();
+  await seedSprint4();
   const counts = await Promise.all([
     prisma.establishment.count(),
     prisma.user.count(),

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { PrismaTx } from '../../database/prisma.service.js';
+import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
+import { InboxService } from '../inbox/inbox.service.js';
 import { LoyaltyService } from '../loyalty/loyalty.service.js';
 import { StockService } from '../stock/stock.service.js';
 import { ReadyNotifierService } from './ready-notifier.service.js';
@@ -20,6 +21,8 @@ export class OrderEffectsService {
     private readonly loyalty: LoyaltyService,
     private readonly stock: StockService,
     private readonly notifier: ReadyNotifierService,
+    private readonly inbox: InboxService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /** Pedido entrou em preparo: baixa de estoque (uma única vez). */
@@ -52,8 +55,25 @@ export class OrderEffectsService {
     await Promise.race([work, new Promise<void>(resolve => setTimeout(resolve, READY_NOTIFY_WAIT_MS).unref())]);
   }
 
-  afterDelivered(userId: string): void {
-    this.loyalty.notify(userId);
+  /**
+   * Pedido entregue: atualiza o saldo e pede a avaliação (ficha 48) por aviso in-app + e-mail (conta com e-mail
+   * verificado). O pedido é enviado em segundo plano: a falha nunca atrasa nem derruba a entrega. Um único pedido
+   * de avaliação por pedido (`dedupeKey`).
+   */
+  afterDelivered(order: { id: string; userId: string; establishmentId: string }): void {
+    this.loyalty.notify(order.userId);
+    void this.safely('pedido de avaliação', async () => {
+      const info = await this.prisma.order.findUnique({ where: { id: order.id }, select: { number: true, establishment: { select: { name: true } } } });
+      if (!info) return;
+      await this.inbox.notifyUser(order.userId, {
+        kind: 'review_request',
+        title: `Como foi seu pedido em ${info.establishment.name}?`,
+        body: `Avalie o pedido #${info.number} e ajude outros clientes a escolher.`,
+        refId: order.id,
+        dedupeKey: `review_request:${order.id}`,
+        email: true,
+      });
+    });
   }
 
   private async safely(what: string, run: () => Promise<void>) {

@@ -21,6 +21,7 @@ export function useCartSummary() {
       available: menu === undefined,
       promotion: null,
       topSeller: false,
+      allergens: [],
     };
     return { ...line, item };
   });

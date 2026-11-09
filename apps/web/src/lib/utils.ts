@@ -13,6 +13,11 @@ export function formatTime(date: Date | number | string) {
   return new Date(date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
+/** Data e hora no fuso do estabelecimento (reservas valem no relógio da casa, não no do aparelho). */
+export function formatDateTimeIn(date: Date | number | string, timeZone: string) {
+  return new Intl.DateTimeFormat('pt-BR', { timeZone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(date)).replace(',', ' ·');
+}
+
 export function formatDateTime(date: Date | number | string) {
   return new Date(date).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }

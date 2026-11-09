@@ -22,6 +22,13 @@ import ShiftSection from './sections/shift/ShiftSection';
 import DashboardSection from './sections/dashboard/DashboardSection';
 import AlertsBanner from '@/components/layout/AlertsBanner';
 import WaitlistSection from './sections/waitlist/WaitlistSection';
+import BookingsSection from './sections/sprint4/BookingsSection';
+import CouponsSection from './sections/sprint4/CouponsSection';
+import CostReportSection from './sections/sprint4/CostReportSection';
+import ExpirySection from './sections/sprint4/ExpirySection';
+import InvoicesSection from './sections/sprint4/InvoicesSection';
+import SupportSection from './sections/sprint4/SupportSection';
+import NotificationsBell from './components/NotificationsBell';
 import type { ManagerSectionProps, ManagerUnit } from './types';
 
 const toUnits = (me: MeResponse): ManagerUnit[] =>
@@ -71,9 +78,12 @@ function ManagerPanel({ me }: { me: MeResponse }) {
         title={sectionLabel(section)}
         sidebarSlot={<UnitSelector units={units} activeId={activeUnit.id} onSelect={setActiveUnitId} />}
         headerRight={
-          <div className="flex items-center gap-2 bg-muted border border-border rounded-xl px-3 py-2 text-sm">
-            <Building2 size={14} className="text-muted-foreground" />
-            <span className="font-medium text-foreground">{activeUnit.name}</span>
+          <div className="flex items-center gap-2">
+            <NotificationsBell establishmentId={activeUnit.id} onOpen={kind => setSection(sectionForNotification(kind) ?? section)} />
+            <div className="flex items-center gap-2 bg-muted border border-border rounded-xl px-3 py-2 text-sm">
+              <Building2 size={14} className="text-muted-foreground" />
+              <span className="font-medium text-foreground">{activeUnit.name}</span>
+            </div>
           </div>
         }
       >
@@ -89,6 +99,10 @@ function ManagerPanel({ me }: { me: MeResponse }) {
     </>
   );
 }
+
+/** Para onde o aviso leva o gestor ao ser aberto. */
+const sectionForNotification = (kind: string): ManagerSection | null =>
+  kind.startsWith('support_') ? 'support' : kind.startsWith('invoice_') ? 'invoices' : kind === 'ingredient_expiring' ? 'expiry' : null;
 
 interface UnitSectionProps {
   section: ManagerSection;
@@ -128,6 +142,12 @@ function UnitSection({ section, sectionProps, onOpenFloorPlan }: UnitSectionProp
       {section === 'kitchen' && <KitchenSection {...sectionProps} />}
       {section === 'shift' && <ShiftSection {...sectionProps} />}
       {section === 'dashboard' && <DashboardSection {...sectionProps} />}
+      {section === 'bookings' && <BookingsSection {...sectionProps} />}
+      {section === 'coupons' && <CouponsSection {...sectionProps} />}
+      {section === 'cost-report' && <CostReportSection {...sectionProps} />}
+      {section === 'expiry' && <ExpirySection {...sectionProps} />}
+      {section === 'support' && <SupportSection {...sectionProps} />}
+      {section === 'invoices' && <InvoicesSection {...sectionProps} />}
       {section === 'qrcodes' && <QRCodesSection {...sectionProps} onOpenFloorPlan={onOpenFloorPlan} />}
     </>
   );

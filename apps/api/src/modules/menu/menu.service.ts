@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import type { AvailabilityChangeDto, ManagedMenuItem, MenuCategoryDto, Page } from '@filafacil/shared';
-import { notFound, unprocessable } from '../../common/http/app-error.js';
+import type { AvailabilityChangeDto, DuplicateMenuItemRequest, ManagedMenuItem, MenuCategoryDto, Page } from '@filafacil/shared';
+import { conflict, notFound, unprocessable } from '../../common/http/app-error.js';
 import { pageArgs, toPage, type PageQueryDto } from '../../common/pagination/page-query.dto.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
-import type { Prisma } from '../../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import { ImageUploadService, type UploadedImage } from '../storage/image-upload.service.js';
 import type { CreateMenuItemDto, UpdateMenuItemDto } from './dto/menu.dto.js';
@@ -17,6 +17,7 @@ const ITEM_SELECT = {
   imageStorageKey: true,
   available: true,
   highlighted: true,
+  allergens: true,
   position: true,
   updatedAt: true,
   station: { select: { id: true, name: true } },
@@ -35,6 +36,7 @@ const toManagedItem = (item: ItemRow): ManagedMenuItem => ({
   imageUrl: item.imageUrl,
   available: item.available,
   highlighted: item.highlighted,
+  allergens: item.allergens,
   stationId: item.station?.id ?? null,
   stationName: item.station?.name ?? null,
   position: item.position,
@@ -42,6 +44,13 @@ const toManagedItem = (item: ItemRow): ManagedMenuItem => ({
 });
 
 const itemNotFound = () => notFound('Item não encontrado neste cardápio.');
+const duplicateItemError = () => conflict('DUPLICATE_ITEM', 'Já existe um item ativo com este nome nesta categoria. Altere o nome para criar a variação.');
+
+/** O índice único parcial (categoria + nome, itens ativos) é a trava final contra itens idênticos, mesmo sob concorrência. */
+function rethrowDuplicate(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw duplicateItemError();
+  throw error;
+}
 
 /**
  * Cardápio do ponto de vista da equipe (fichas 28 e 19). Toda consulta filtra pelo
@@ -87,13 +96,62 @@ export class MenuService {
           priceCents: dto.priceCents,
           imageUrl: dto.imageUrl ?? null,
           available: dto.available ?? true,
+          allergens: dto.allergens ?? [],
           position: (last._max.position ?? 0) + 1,
         },
         select: ITEM_SELECT,
       });
-    });
+    }).catch(rethrowDuplicate);
     this.realtime.menuUpdated(establishmentId);
     return toManagedItem(item);
+  }
+
+  /**
+   * Ficha 67: cria uma variação a partir de um item existente. Copia categoria, descrição, preço, alérgenos, estação
+   * e a foto (cópia própria do arquivo); os campos do corpo substituem os copiados. Nunca cria dois itens ativos
+   * iguais (mesmo nome na mesma categoria): sem nome informado, usa "Nome (cópia)", "Nome (cópia 2)"…
+   */
+  async duplicateItem(establishmentId: string, itemId: string, dto: DuplicateMenuItemRequest): Promise<ManagedMenuItem> {
+    const source = await this.prisma.menuItem.findFirst({
+      where: { id: itemId, establishmentId, deletedAt: null },
+      select: { name: true, description: true, priceCents: true, imageUrl: true, imageStorageKey: true, available: true, allergens: true, stationId: true, category: { select: { name: true } } },
+    });
+    if (!source) throw itemNotFound();
+    const copy = await this.images.duplicate(source.imageStorageKey);
+    try {
+      const item = await this.prisma.$transaction(async tx => {
+        const categoryId = await this.categoryIdFor(tx, establishmentId, dto.categoryName ?? source.category.name);
+        let name = dto.name?.trim();
+        if (!name) {
+          const taken = new Set((await tx.menuItem.findMany({ where: { categoryId, deletedAt: null }, select: { name: true } })).map(row => row.name.toLowerCase()));
+          const base = source.name.slice(0, 66);
+          name = `${base} (cópia)`;
+          for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} (cópia ${n})`;
+        }
+        const last = await tx.menuItem.aggregate({ where: { categoryId }, _max: { position: true } });
+        return tx.menuItem.create({
+          data: {
+            establishmentId,
+            categoryId,
+            stationId: source.stationId,
+            name,
+            description: dto.description ?? source.description,
+            priceCents: dto.priceCents ?? source.priceCents,
+            imageUrl: copy ? copy.url : source.imageStorageKey ? null : source.imageUrl,
+            imageStorageKey: copy?.key ?? null,
+            available: source.available,
+            allergens: dto.allergens ?? source.allergens,
+            position: (last._max.position ?? 0) + 1,
+          },
+          select: ITEM_SELECT,
+        });
+      });
+      this.realtime.menuUpdated(establishmentId);
+      return toManagedItem(item);
+    } catch (error) {
+      await this.images.discard(copy?.key);
+      return rethrowDuplicate(error);
+    }
   }
 
   async updateItem(establishmentId: string, itemId: string, dto: UpdateMenuItemDto): Promise<ManagedMenuItem> {
@@ -110,11 +168,12 @@ export class MenuService {
           priceCents: dto.priceCents,
           available: dto.available,
           categoryId,
+          ...(dto.allergens !== undefined && { allergens: dto.allergens }),
           ...(dto.imageUrl !== undefined && { imageUrl: dto.imageUrl, imageStorageKey: null }),
         },
         select: ITEM_SELECT,
       });
-    });
+    }).catch(rethrowDuplicate);
     // Trocar a foto enviada por um link externo libera o arquivo antigo.
     if (dto.imageUrl !== undefined) await this.images.discard(current.imageStorageKey);
     this.realtime.menuUpdated(establishmentId);

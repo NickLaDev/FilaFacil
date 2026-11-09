@@ -1,5 +1,8 @@
 import { useState, type UIEvent } from 'react';
-import { CalendarCheck, ChevronLeft, Clock, MapPin, Navigation, Pause, QrCode, Star, Utensils } from 'lucide-react';
+import { CalendarCheck, CalendarClock, ChevronLeft, Clock, Link2, MapPin, MessageCircle, Navigation, Pause, QrCode, Send, Share2, Star, Utensils, Wallet } from 'lucide-react';
+import { SHARE_SOURCE_LABELS, type ShareSource } from '@filafacil/shared';
+import BottomSheet from '@/components/ui/BottomSheet';
+import { restaurantShareUrl, useRestaurantCashback, useRestaurantReviews } from '@/services/sprint4Service';
 import { imageOrPlaceholder } from '@/lib/images';
 import { cn } from '@/lib/utils';
 import { LoadingBlock } from '@/components/ui/QueryState';
@@ -23,6 +26,9 @@ export default function RestaurantDetailScreen() {
   const { favoriteIds, toggle } = useFavorites();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [reserving, setReserving] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const cashbackRules = useRestaurantCashback(establishmentId).data ?? [];
+  const reviews = useRestaurantReviews(establishmentId).data;
   const reservation = useMyReservation(establishmentId, Boolean(account));
 
   if (query.error) return <RestaurantUnavailable error={query.error} onRetry={() => void query.refetch()} onExplore={() => go('explore')} />;
@@ -46,6 +52,46 @@ export default function RestaurantDetailScreen() {
       return;
     }
     setReserving(true);
+  }
+
+  function openBooking() {
+    if (!account) {
+      showToast('Entre na sua conta para reservar');
+      setPostAuthScreen('restaurant-detail');
+      go('login');
+      return;
+    }
+    go('booking');
+  }
+
+  /** Ficha 62: link público que abre direto nesta página (o app é web: funciona sem instalar nada). */
+  async function share(source: ShareSource) {
+    if (!restaurant) return;
+    const url = restaurantShareUrl(restaurant.id, source);
+    const text = `Vamos no ${restaurant.name}? Olha a página deles: ${url}`;
+    try {
+      if (source === 'copy') {
+        await navigator.clipboard.writeText(url);
+        showToast('Link copiado');
+      } else if (source === 'native') {
+        if (navigator.share) await navigator.share({ title: restaurant.name, text: `Vamos no ${restaurant.name}?`, url });
+        else {
+          await navigator.clipboard.writeText(url);
+          showToast('Link copiado');
+        }
+      } else {
+        const target = {
+          whatsapp: `https://wa.me/?text=${encodeURIComponent(text)}`,
+          telegram: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Vamos no ${restaurant.name}?`)}`,
+          sms: `sms:?&body=${encodeURIComponent(text)}`,
+          email: `mailto:?subject=${encodeURIComponent(restaurant.name)}&body=${encodeURIComponent(text)}`,
+        }[source as 'whatsapp' | 'telegram' | 'sms' | 'email'];
+        if (target) window.open(target, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      // Compartilhamento cancelado pelo usuário.
+    }
+    setSharing(false);
   }
 
   function handleGalleryScroll(event: UIEvent<HTMLDivElement>) {
@@ -75,6 +121,9 @@ export default function RestaurantDetailScreen() {
           <ChevronLeft size={18} className="text-white" />
         </button>
         <FavoriteButton isFavorite={favoriteIds.has(restaurant.id)} onToggle={() => toggle(restaurant.id, restaurant)} className="absolute top-4 right-4 w-9 h-9 bg-black/40" />
+        <button onClick={() => setSharing(true)} data-testid="share-button" className="absolute top-4 right-16 w-9 h-9 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center" aria-label="Compartilhar restaurante">
+          <Share2 size={16} className="text-white" />
+        </button>
         {restaurant.images.length > 1 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
             {restaurant.images.map((image, index) => (
@@ -118,6 +167,13 @@ export default function RestaurantDetailScreen() {
             <span key={tag} className="bg-muted text-muted-foreground text-xs px-3 py-1.5 rounded-full">{tag}</span>
           ))}
         </div>
+
+        {cashbackRules.length > 0 && (
+          <div data-testid="cashback-chip" className="flex items-center gap-2 bg-success-bg text-success rounded-xl px-4 py-3 text-sm">
+            <Wallet size={15} className="flex-shrink-0" />
+            <p>{cashbackRules.map(rule => rule.promotionName ? `${rule.percent}% de volta em ${rule.promotionName}` : `${rule.percent}% de cashback nos pedidos`).join(' · ')}</p>
+          </div>
+        )}
 
         <div className="bg-card border border-border rounded-xl p-4 flex flex-col gap-3">
           <div className="flex items-start gap-3">
@@ -163,16 +219,34 @@ export default function RestaurantDetailScreen() {
         )}
 
         {restaurant.ratingCount > 0 && (
-          <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-4">
-            <p className="font-display font-black text-foreground text-3xl">{restaurant.rating}</p>
-            <div>
-              <div className="flex gap-0.5">
-                {[1, 2, 3, 4, 5].map(star => (
-                  <Star key={star} size={12} className={star <= Math.round(restaurant.rating) ? 'fill-primary text-primary' : 'text-border fill-border'} />
-                ))}
+          <div data-testid="reviews" className="bg-card border border-border rounded-xl p-4 flex flex-col gap-3">
+            <div className="flex items-center gap-4">
+              <p data-testid="rating-average" className="font-display font-black text-foreground text-3xl">{restaurant.rating}</p>
+              <div>
+                <div className="flex gap-0.5">
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <Star key={star} size={12} className={star <= Math.round(restaurant.rating) ? 'fill-primary text-primary' : 'text-border fill-border'} />
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Nota média · {restaurant.ratingCount} {restaurant.ratingCount === 1 ? 'avaliação' : 'avaliações'}</p>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">Nota média · {restaurant.ratingCount} avaliações</p>
             </div>
+            {reviews && reviews.items.length > 0 && (
+              <ul className="flex flex-col divide-y divide-border border-t border-border">
+                {reviews.items.map(review => (
+                  <li key={review.id} data-testid="review-item" className="pt-3 pb-1 flex flex-col gap-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-foreground">{review.authorName}</p>
+                      <div className="flex gap-0.5" aria-label={`${review.rating} de 5 estrelas`}>
+                        {[1, 2, 3, 4, 5].map(star => <Star key={star} size={11} className={star <= review.rating ? 'fill-primary text-primary' : 'text-border fill-border'} />)}
+                      </div>
+                    </div>
+                    {review.comment && <p className="text-sm text-muted-foreground">{review.comment}</p>}
+                    <p className="text-[11px] text-muted-foreground">{new Date(review.createdAt).toLocaleDateString('pt-BR')}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </div>
@@ -193,6 +267,10 @@ export default function RestaurantDetailScreen() {
           <CalendarCheck size={15} />
           {reservation.data?.reservation ? `Sua reserva · posição ${reservation.data.reservation.position}` : 'Reservar mesa'}
         </button>
+        <button onClick={openBooking} data-testid="booking-button" className="w-full bg-card border border-border text-foreground font-medium py-3.5 rounded-xl text-sm flex items-center justify-center gap-2">
+          <CalendarClock size={15} />
+          Reservar com data e horário
+        </button>
         {!restaurant.reservationsOpen && !reservation.data?.reservation && (
           <p className="text-xs text-muted-foreground text-center -mt-1">
             {closed ? 'Reservas disponíveis quando o restaurante estiver aberto.' : 'Este restaurante não aceita reservas pelo aplicativo.'}
@@ -208,6 +286,21 @@ export default function RestaurantDetailScreen() {
           </button>
         )}
       </FixedBottom>
+
+      {sharing && (
+        <BottomSheet onClose={() => setSharing(false)}>
+          <p className="font-display font-bold text-foreground text-lg mb-1">Compartilhar {restaurant.name}</p>
+          <p className="text-xs text-muted-foreground mb-4">Seus amigos abrem a página do restaurante direto no navegador, sem precisar instalar nada.</p>
+          <div className="grid grid-cols-2 gap-2">
+            {([['whatsapp', MessageCircle], ['telegram', Send], ['sms', MessageCircle], ['email', Send], ['copy', Link2], ['native', Share2]] as [ShareSource, typeof Link2][]).map(([source, Icon]) => (
+              <button key={source} data-testid={`share-${source}`} onClick={() => void share(source)} className="flex items-center gap-2 border border-border rounded-xl px-3 py-3 text-sm text-foreground hover:bg-muted/50">
+                <Icon size={15} className="text-muted-foreground" />
+                {SHARE_SOURCE_LABELS[source]}
+              </button>
+            ))}
+          </div>
+        </BottomSheet>
+      )}
 
       {reserving && reservation.data && (
         <ReservationSheet restaurantId={restaurant.id} restaurantName={restaurant.name} state={reservation.data} notify={showToast} onClose={() => setReserving(false)} />

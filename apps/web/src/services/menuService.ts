@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { REALTIME_EVENTS, type AvailabilityChangeDto, type ManagedMenuItem, type MenuCategoryDto, type MenuRankingDto, type Page } from '@filafacil/shared';
+import { REALTIME_EVENTS, type DuplicateMenuItemRequest, type AvailabilityChangeDto, type ManagedMenuItem, type MenuCategoryDto, type MenuRankingDto, type Page } from '@filafacil/shared';
 import { api } from '@/lib/api/client';
 import { queryClient } from '@/lib/api/queryClient';
 import { useRealtime } from '@/lib/realtime';
@@ -21,6 +21,8 @@ export interface MenuItemView {
   highlighted: boolean;
   /** Ficha 24: estação da cozinha (null = Geral). */
   stationId: string | null;
+  /** Ficha 64: alérgenos do item. */
+  allergens: string[];
 }
 
 const toView = (item: ManagedMenuItem): MenuItemView => ({
@@ -35,6 +37,7 @@ const toView = (item: ManagedMenuItem): MenuItemView => ({
   available: item.available,
   highlighted: item.highlighted,
   stationId: item.stationId,
+  allergens: item.allergens,
 });
 
 /** Ordem padrão das categorias conhecidas quando a casa ainda não definiu outra. */
@@ -83,6 +86,7 @@ export interface MenuItemInput {
   priceCents: number;
   available: boolean;
   stationId?: string | null;
+  allergens?: string[];
   /** Link https externo; foto enviada do computador vai por uploadMenuItemPhoto. */
   imageUrl?: string;
 }
@@ -91,6 +95,15 @@ export async function saveMenuItem(establishmentId: string, input: MenuItemInput
   const base = `/establishments/${establishmentId}/menu/items`;
   try {
     return id ? await api.patch<ManagedMenuItem>(`${base}/${id}`, input) : await api.post<ManagedMenuItem>(base, input);
+  } finally {
+    refreshMenu(establishmentId);
+  }
+}
+
+/** Ficha 67: cria uma variação a partir do item (o servidor copia a foto); os campos enviados substituem os copiados. */
+export async function duplicateMenuItem(establishmentId: string, itemId: string, input: DuplicateMenuItemRequest) {
+  try {
+    return await api.post<ManagedMenuItem>(`/establishments/${establishmentId}/menu/items/${itemId}/duplicate`, input);
   } finally {
     refreshMenu(establishmentId);
   }

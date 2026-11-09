@@ -53,6 +53,21 @@ export interface WebhookRequest {
   requestId: string | undefined;
 }
 
+export interface TokenizeCardInput {
+  number: string;
+  holderName: string;
+  expMonth: number;
+  expYear: number;
+  cvv: string;
+}
+
+/** Resultado da tokenização: só o token e dados exibíveis. O número e o CVV nunca são guardados. */
+export interface TokenizedCard {
+  token: string;
+  brand: string;
+  last4: string;
+}
+
 /**
  * Fronteira com o provedor de pagamento. A implementação real é do Mercado Pago; sem provider
  * configurado o serviço recusa pagamentos em vez de aprová-los.
@@ -60,6 +75,13 @@ export interface WebhookRequest {
 export abstract class PaymentGateway {
   abstract readonly provider: string;
   abstract readonly available: boolean;
+  /** O provedor guarda cartões em cofre próprio (ficha 49)? Sem cofre, não há como salvar métodos de pagamento. */
+  readonly supportsCardVault: boolean = false;
+  /** Tokeniza o cartão no cofre do provedor e devolve um token reutilizável (ficha 49). */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- assinatura do contrato; só o simulador implementa o cofre
+  tokenizeCard(_input: TokenizeCardInput): Promise<TokenizedCard> {
+    return Promise.reject(new GatewayError('Este provedor não oferece cofre de cartões.', null, 'not_processed'));
+  }
   abstract createPayment(input: CreateGatewayPayment): Promise<GatewayPayment>;
   abstract getPayment(providerPaymentId: string): Promise<GatewayPayment>;
   /**

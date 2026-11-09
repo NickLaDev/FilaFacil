@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CalendarCheck, Check, ChevronRight, Gift, Heart, MapPin, Plus, ShieldCheck, ShoppingBag, Trash2, type LucideIcon } from 'lucide-react';
+import { Bell, CalendarCheck, Check, ChevronRight, CreditCard, Gift, Heart, MapPin, Plus, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, Wallet, type LucideIcon } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { formatPhone, isValidEmail, isValidPhone } from '@/lib/validation';
 import BottomSheet from '@/components/ui/BottomSheet';
@@ -7,19 +7,21 @@ import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { errorMessage, isApiError } from '@/lib/api/client';
 import { deleteAddress, saveAddress, setDefaultAddress, updateProfile, useAddresses } from '@/services/profileService';
 import { useMyReservations } from '@/services/reservationService';
+import { useMyBookings, useNotifications } from '@/services/sprint4Service';
+import { BookingList } from './Sprint4Screens';
 import { useClient } from '../clientContext';
 import { FixedBottom, ScreenHeader } from '../components/Layout';
 import { TextField } from '../components/AuthFields';
 import VerificationBanner from '../components/VerificationBanner';
 import type { ClientScreen } from '../types';
 
-function MenuGroup({ title, items }: { title: string; items: { icon: LucideIcon; label: string; screen: ClientScreen }[] }) {
+function MenuGroup({ title, items }: { title: string; items: { icon: LucideIcon; label: string; screen: ClientScreen; badge?: number }[] }) {
   const { go } = useClient();
   return (
     <div>
       <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2 px-1">{title}</p>
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
-        {items.map(({ icon: Icon, label, screen }, index) => (
+        {items.map(({ icon: Icon, label, screen, badge }, index) => (
           <button
             key={label}
             onClick={() => go(screen)}
@@ -27,6 +29,7 @@ function MenuGroup({ title, items }: { title: string; items: { icon: LucideIcon;
           >
             <Icon size={16} className="text-muted-foreground flex-shrink-0" />
             <span className="text-sm text-foreground flex-1">{label}</span>
+            {badge ? <span data-testid={`badge-${screen}`} className="text-[11px] font-bold bg-primary text-primary-foreground rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center">{badge}</span> : null}
             <ChevronRight size={15} className="text-muted-foreground" />
           </button>
         ))}
@@ -39,6 +42,7 @@ function MenuGroup({ title, items }: { title: string; items: { icon: LucideIcon;
 export function ProfileScreen() {
   const { go, account, isVisitor, signOut } = useClient();
   const [logoutSheet, setLogoutSheet] = useState(false);
+  const notifications = useNotifications(Boolean(account));
 
   async function confirmLogout() {
     setLogoutSheet(false);
@@ -77,9 +81,21 @@ export function ProfileScreen() {
             items={[
               { icon: ShoppingBag, label: 'Meus pedidos', screen: 'orders' },
               { icon: Gift, label: 'FilaZero Club', screen: 'club' },
+              { icon: Wallet, label: 'Meu cashback', screen: 'cashback' },
               { icon: CalendarCheck, label: 'Minhas reservas', screen: 'reservations' },
+              { icon: Bell, label: 'Notificações', screen: 'notifications', badge: notifications.data?.unread },
               { icon: Heart, label: 'Favoritos', screen: 'favorites' },
               { icon: MapPin, label: 'Meus endereços', screen: 'addresses' },
+            ]}
+          />
+        )}
+
+        {account && (
+          <MenuGroup
+            title="Pagamento e preferências"
+            items={[
+              { icon: CreditCard, label: 'Métodos de pagamento', screen: 'payment-methods' },
+              { icon: ShieldAlert, label: 'Alergias e restrições', screen: 'dietary' },
             ]}
           />
         )}
@@ -262,10 +278,19 @@ export function AddressesScreen() {
 export function ReservationsScreen() {
   const { go, openEstablishment } = useClient();
   const query = useMyReservations(true);
+  const bookings = useMyBookings(true);
   return (
     <div className="min-h-screen bg-background flex flex-col pb-24">
       <ScreenHeader title="Minhas reservas" onBack={() => go('profile')} />
       <div className="px-5 py-5 flex flex-col gap-3">
+        {/* Ficha 30: reservas de mesa com data e horário (confirmadas, recusadas, canceladas). */}
+        {bookings.data && bookings.data.length > 0 && (
+          <>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium px-1">Reservas com horário</p>
+            <BookingList bookings={bookings.data} />
+            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium px-1 mt-2">Fila de espera</p>
+          </>
+        )}
         {query.error ? (
           <ErrorBlock error={query.error} onRetry={() => void query.refetch()} />
         ) : !query.data ? (

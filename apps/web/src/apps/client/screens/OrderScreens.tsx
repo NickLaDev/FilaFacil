@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronRight, Circle, Clock, MapPin, Receipt, Share2, ShoppingBag, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, Clock, MapPin, Receipt, Share2, ShoppingBag, Star, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import BottomSheet from '@/components/ui/BottomSheet';
 import { errorMessage } from '@/lib/api/client';
@@ -233,6 +233,12 @@ export function OrderTrackingScreen() {
             Cancelar pedido
           </button>
         )}
+        {order.canReview && (
+          <button onClick={() => openOrder(order.id, 'review')} data-testid="review-cta" className="w-full bg-primary text-primary-foreground rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2">
+            <Star size={15} />
+            Avaliar pedido
+          </button>
+        )}
         {paid && (
           <button onClick={() => openOrder(order.id, 'receipt')} className="w-full border border-border rounded-xl py-3 text-sm font-medium text-foreground hover:bg-muted transition-colors">
             Ver comprovante
@@ -243,7 +249,7 @@ export function OrderTrackingScreen() {
         <BottomSheet onClose={() => setConfirmCancel(false)}>
           <p className="font-display font-bold text-foreground text-lg text-center mb-2">Cancelar o pedido #{order.number}?</p>
           <p className="text-muted-foreground text-sm text-center mb-6">
-            {paid ? 'O pagamento será estornado e os pontos do FilaZero Club voltam para você.' : 'O pedido ainda não foi pago e será cancelado.'} Depois que o preparo começa, não dá mais para cancelar.
+            {paid ? 'O pagamento será estornado e pontos, cashback e cupom usados voltam para você.' : 'O pedido ainda não foi pago e será cancelado.'} Depois que o preparo começa, não dá mais para cancelar.
           </p>
           <div className="flex flex-col gap-3">
             <button disabled={cancelling} onClick={() => void confirmCancellation()} className="w-full bg-error text-white font-display font-semibold py-4 rounded-xl disabled:opacity-60">Cancelar pedido</button>
@@ -257,7 +263,7 @@ export function OrderTrackingScreen() {
 
 /** Comprovante digital do pagamento, montado com os dados confirmados pelo servidor (ficha 04). */
 export function ReceiptScreen() {
-  const { go, orderId, showToast } = useClient();
+  const { go, orderId, showToast, openOrder } = useClient();
   const query = useOrder(orderId);
   const order = query.data;
   if (!order) {
@@ -308,8 +314,14 @@ export function ReceiptScreen() {
             </div>
           ))}
           <div className="border-t border-dashed border-border mt-3 pt-3">
+            {order.couponDiscountCents > 0 && (
+              <div className="flex justify-between text-sm text-success pb-1"><span>Cupom {order.couponCode}</span><span>-{formatCents(order.couponDiscountCents)}</span></div>
+            )}
             {order.discountCents > 0 && (
               <div className="flex justify-between text-sm text-success pb-1"><span>Desconto FilaZero Club ({order.redeemedPoints} pts)</span><span>-{formatCents(order.discountCents)}</span></div>
+            )}
+            {order.cashbackUsedCents > 0 && (
+              <div className="flex justify-between text-sm text-success pb-1"><span>Cashback usado</span><span>-{formatCents(order.cashbackUsedCents)}</span></div>
             )}
             <div className="flex justify-between font-display font-bold"><span>Total</span><span>{formatCents(order.totalCents)}</span></div>
           </div>
@@ -329,6 +341,18 @@ export function ReceiptScreen() {
             )}
           </div>
         </div>
+        {order.cashbackEarnCents > 0 && order.status !== 'cancelled' && (
+          <p data-testid="cashback-earn" className="text-xs text-success text-center mt-3">Cashback deste pedido: {formatCents(order.cashbackEarnCents)} {order.status === 'delivered' ? '(creditado na sua carteira)' : '(entra no seu saldo quando o pedido for entregue)'}</p>
+        )}
+        {order.canReview && (
+          <button onClick={() => openOrder(order.id, 'review')} data-testid="review-cta" className="w-full mt-4 bg-primary text-primary-foreground font-display font-semibold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2">
+            <Star size={15} />
+            Avaliar pedido
+          </button>
+        )}
+        {order.reviewRating && (
+          <p data-testid="review-given" className="text-xs text-muted-foreground text-center mt-3">Você avaliou este pedido com {order.reviewRating} {order.reviewRating === 1 ? 'estrela' : 'estrelas'}.</p>
+        )}
         {approved && (
           <button onClick={share} className="w-full mt-4 bg-card border border-border text-foreground font-medium py-3.5 rounded-xl text-sm flex items-center justify-center gap-2">
             <Share2 size={15} />

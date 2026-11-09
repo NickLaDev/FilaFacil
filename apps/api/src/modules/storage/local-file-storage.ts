@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { FileStorage } from './file-storage.js';
 
@@ -23,6 +23,11 @@ export class LocalFileStorage extends FileStorage {
     // `wx` falha se o arquivo existir: nunca sobrescreve outro upload.
     await writeFile(this.pathFor(key), content, { flag: 'wx', mode: 0o640 });
     return { key, url: `${UPLOADS_URL_PREFIX}${key}` };
+  }
+
+  async copy(key: string) {
+    const content = await readFile(this.pathFor(key));
+    return this.save(content, key.slice(key.lastIndexOf('.') + 1));
   }
 
   async delete(key: string) {

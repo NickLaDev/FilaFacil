@@ -152,6 +152,7 @@ export class RestaurantsService {
         priceCents: true,
         imageUrl: true,
         highlighted: true,
+        allergens: true,
         ranking: { select: { rank: true } },
         category: { select: { id: true, name: true } },
         promotionItems: {
@@ -177,6 +178,7 @@ export class RestaurantsService {
         promotion: promotion ? { ...promotion, endsAt: promotion.endsAt.toISOString() } : null,
         isTopOrdered: item.ranking !== null,
         isHighlighted: item.highlighted,
+        allergens: item.allergens,
       };
     });
     return { establishmentId: id, categories: [...categories.values()], items: menuItems };

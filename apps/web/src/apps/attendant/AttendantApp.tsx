@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BellRing, BookOpen, ClipboardList, LogOut, Map as MapIcon, Receipt } from 'lucide-react';
+import { BellRing, BookOpen, CalendarCheck, ClipboardList, LogOut, Map as MapIcon, Receipt } from 'lucide-react';
 import type { MeResponse, OrderingStatus } from '@filafacil/shared';
 import AccessBlocked from '@/components/layout/AccessBlocked';
 import StaffGate from '@/components/layout/StaffGate';
@@ -14,16 +14,18 @@ import MenuAvailabilitySection from './sections/MenuAvailabilitySection';
 import OrdersSection from './sections/OrdersSection';
 import CallsSection from './sections/CallsSection';
 import TabsSection from './sections/TabsSection';
+import BookingsSection from '../manager/sections/sprint4/BookingsSection';
 import AlertsBanner from '@/components/layout/AlertsBanner';
 import { useStaffCalls } from '@/services/operationsService';
 
-type AttendantSection = 'floor' | 'orders' | 'calls' | 'tabs' | 'menu';
+type AttendantSection = 'floor' | 'orders' | 'calls' | 'tabs' | 'menu' | 'bookings';
 
 const SECTIONS = [
   { id: 'floor', icon: MapIcon, label: 'Mapa', title: 'Mapa de mesas' },
   { id: 'orders', icon: ClipboardList, label: 'Pedidos', title: 'Pedidos' },
   { id: 'calls', icon: BellRing, label: 'Chamados', title: 'Chamados de garçom' },
   { id: 'tabs', icon: Receipt, label: 'Comandas', title: 'Comandas' },
+  { id: 'bookings', icon: CalendarCheck, label: 'Reservas', title: 'Reservas de mesa' },
   { id: 'menu', icon: BookOpen, label: 'Cardápio', title: 'Disponibilidade do cardápio' },
 ] as const;
 
@@ -130,6 +132,9 @@ function AttendantPanel({ me }: { me: MeResponse }) {
         )}
         {section === 'calls' && <CallsSection establishmentId={establishmentId} notify={showToast} />}
         {section === 'tabs' && <TabsSection establishmentId={establishmentId} notify={showToast} />}
+        {section === 'bookings' && (
+          <BookingsSection unit={{ id: establishmentId, name: membership.establishmentName, status: membership.establishmentStatus, address: membership.address, organizationId: membership.organizationId }} units={[]} notify={showToast} />
+        )}
         {section === 'menu' && <MenuAvailabilitySection establishmentId={establishmentId} notify={showToast} />}
       </div>
       <Toast message={toastMessage} />
