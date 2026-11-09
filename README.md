@@ -300,7 +300,7 @@ Todas as datas são `timestamptz`. O horário de funcionamento é guardado em mi
 pnpm test
 ```
 
-72 testes (Vitest):
+453 testes (Vitest):
 
 - **Unitários:** horário/fuso, preço, custo de ficha, estimativa da fila e proteção do CPF.
 - **Integração contra PostgreSQL real** (`filafacil_test`, com migrations aplicadas automaticamente):
