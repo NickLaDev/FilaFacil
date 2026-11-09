@@ -384,7 +384,11 @@ export interface CostReportDto {
   to: string;
   rows: CostReportRow[];
   categories: CostReportCategory[];
-  totals: { quantity: number; revenueCents: number; costCents: number; marginCents: number; marginPercent: number | null };
+  /**
+   * `revenueCents`: tudo que foi vendido no período. Custo e margem consideram só os itens com ficha técnica
+   * (`coveredRevenueCents`): item sem ficha não entra no custo, então também não entra na margem.
+   */
+  totals: { quantity: number; revenueCents: number; coveredRevenueCents: number; costCents: number; marginCents: number; marginPercent: number | null };
   /** Itens vendidos sem ficha técnica: o custo deles não entra nos totais. */
   itemsWithoutSheet: number;
 }
@@ -524,6 +528,30 @@ export interface BillingRunDto {
 }
 
 // ─── Histórico de alterações do estabelecimento (ficha 66) ──────────────────
+
+/** Campos do cadastro do estabelecimento que geram histórico, com o rótulo exibido. */
+export const ESTABLISHMENT_FIELD_LABELS: Record<string, string> = {
+  created: 'Cadastro criado',
+  name: 'Nome',
+  type: 'Tipo',
+  city: 'Cidade',
+  address: 'Endereço',
+  latitude: 'Latitude',
+  longitude: 'Longitude',
+  timezone: 'Fuso horário',
+  organization: 'Organização',
+  plan: 'Plano',
+  status: 'Status',
+  foodCategories: 'Categorias de comida',
+  tags: 'Tags',
+  averageWaitMinutes: 'Tempo médio de espera (min)',
+  pickupPoint: 'Local de retirada',
+  ordersPaused: 'Pedidos pausados',
+  highDemand: 'Alta demanda',
+  openingHours: 'Horário de funcionamento',
+  photos: 'Fotos',
+  expiryAlertDays: 'Antecedência do alerta de validade (dias)',
+};
 
 export interface EstablishmentChangeDto {
   id: string;

@@ -5,6 +5,7 @@ import { pageArgs } from '../../common/pagination/page-query.dto.js';
 import { isValidTimeZone, parseTime, toOpeningHourDto } from '../../common/time/opening-hours.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
+import { diffFields, ChangeLogService, type ChangeActor } from '../establishment-history/change-log.service.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import { ImageUploadService, type UploadedImage } from '../storage/image-upload.service.js';
 import type {
@@ -53,6 +54,14 @@ const toAdminDto = (row: AdminRow): AdminEstablishmentDto => ({
   createdAt: row.createdAt.toISOString(),
 });
 
+/** Campos do cadastro que entram no histórico (ficha 66), na forma legível usada para comparar antes e depois. */
+const TRACKED_FIELDS = ['name', 'type', 'city', 'address', 'latitude', 'longitude', 'timezone', 'organization', 'plan', 'status', 'foodCategories', 'tags', 'averageWaitMinutes', 'pickupPoint', 'ordersPaused', 'highDemand', 'openingHours'];
+
+const trackedView = (row: AdminRow): Record<string, unknown> => {
+  const dto = toAdminDto(row);
+  return { ...dto, organization: dto.organization.name, plan: dto.plan.name };
+};
+
 const toRanges = (hours: OpeningHourInputDto[]) =>
   hours.map(hour => ({ weekday: hour.weekday, opensAt: parseTime(hour.opensAt), closesAt: Math.min(parseTime(hour.closesAt), 1440) }));
 
@@ -63,6 +72,7 @@ export class AdminEstablishmentsService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly images: ImageUploadService,
+    private readonly changeLog: ChangeLogService,
   ) {}
 
   async list(query: ListEstablishmentsQueryDto): Promise<AdminEstablishmentsPage> {
@@ -90,7 +100,7 @@ export class AdminEstablishmentsService {
     return toAdminDto(row);
   }
 
-  async create(dto: CreateEstablishmentDto): Promise<AdminEstablishmentDto> {
+  async create(dto: CreateEstablishmentDto, actor: ChangeActor): Promise<AdminEstablishmentDto> {
     await this.assertReferences(dto.organizationId, dto.planId);
     const timezone = this.validTimezone(dto.timezone);
     const row = await this.prisma.establishment.create({
@@ -115,20 +125,22 @@ export class AdminEstablishmentsService {
       },
       include: ADMIN_INCLUDE,
     });
+    await this.changeLog.record(this.prisma, row.id, actor, [{ field: 'created', oldValue: null, newValue: { name: row.name, plan: row.plan.name, organization: row.organization.name } }]);
     this.realtime.restaurantUpdated(row.id);
     return toAdminDto(row);
   }
 
   /** Mudanças de plano/status valem na hora para a equipe e para o cliente (eventos em tempo real). */
-  async update(id: string, dto: UpdateEstablishmentDto): Promise<AdminEstablishmentDto> {
+  async update(id: string, dto: UpdateEstablishmentDto, actor: ChangeActor): Promise<AdminEstablishmentDto> {
     await this.get(id);
     await this.assertReferences(dto.organizationId, dto.planId);
     const row = await this.prisma.$transaction(async tx => {
+      const before = await tx.establishment.findUniqueOrThrow({ where: { id }, include: ADMIN_INCLUDE });
       if (dto.openingHours) {
         await tx.openingHour.deleteMany({ where: { establishmentId: id } });
         await tx.openingHour.createMany({ data: toRanges(dto.openingHours).map(range => ({ ...range, establishmentId: id })) });
       }
-      return tx.establishment.update({
+      const updated = await tx.establishment.update({
         where: { id },
         data: {
           name: dto.name,
@@ -150,42 +162,61 @@ export class AdminEstablishmentsService {
         },
         include: ADMIN_INCLUDE,
       });
+      await this.changeLog.record(tx, id, actor, diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS));
+      return updated;
     });
     this.realtime.establishmentUpdated(id);
     return toAdminDto(row);
   }
 
   /** Inativo ou suspenso some da busca e da página do cliente imediatamente. */
-  async setStatus(id: string, status: EstablishmentStatus): Promise<AdminEstablishmentDto> {
+  async setStatus(id: string, status: EstablishmentStatus, actor: ChangeActor): Promise<AdminEstablishmentDto> {
     await this.get(id);
-    const row = await this.prisma.establishment.update({ where: { id }, data: { status }, include: ADMIN_INCLUDE });
+    const row = await this.prisma.$transaction(async tx => {
+      const before = await tx.establishment.findUniqueOrThrow({ where: { id }, include: ADMIN_INCLUDE });
+      const updated = await tx.establishment.update({ where: { id }, data: { status }, include: ADMIN_INCLUDE });
+      await this.changeLog.record(tx, id, actor, diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS));
+      return updated;
+    });
     this.realtime.establishmentUpdated(id);
     return toAdminDto(row);
   }
 
   /** Ficha 37: migrar de plano libera/bloqueia recursos na hora (os guards leem o plano a cada requisição). */
-  async setPlan(id: string, planId: string): Promise<AdminEstablishmentDto> {
+  async setPlan(id: string, planId: string, actor: ChangeActor): Promise<AdminEstablishmentDto> {
     await this.get(id);
     await this.assertReferences(undefined, planId);
-    const row = await this.prisma.establishment.update({ where: { id }, data: { planId }, include: ADMIN_INCLUDE });
+    const row = await this.prisma.$transaction(async tx => {
+      const before = await tx.establishment.findUniqueOrThrow({ where: { id }, include: ADMIN_INCLUDE });
+      const updated = await tx.establishment.update({ where: { id }, data: { planId }, include: ADMIN_INCLUDE });
+      await this.changeLog.record(tx, id, actor, diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS));
+      return updated;
+    });
     this.realtime.establishmentUpdated(id);
     return toAdminDto(row);
   }
 
-  async addPhoto(id: string, file: UploadedImage | undefined): Promise<AdminEstablishmentDto> {
+  async addPhoto(id: string, file: UploadedImage | undefined, actor: ChangeActor): Promise<AdminEstablishmentDto> {
     await this.get(id);
     const count = await this.prisma.establishmentPhoto.count({ where: { establishmentId: id } });
     if (count >= MAX_PHOTOS) throw unprocessable('PHOTO_LIMIT', `Cada estabelecimento pode ter até ${MAX_PHOTOS} fotos.`);
     const stored = await this.images.store(file);
-    await this.prisma.establishmentPhoto.create({ data: { establishmentId: id, url: stored.url, storageKey: stored.key, position: count + 1 } });
+    await this.prisma.$transaction(async tx => {
+      await tx.establishmentPhoto.create({ data: { establishmentId: id, url: stored.url, storageKey: stored.key, position: count + 1 } });
+      await this.changeLog.record(tx, id, actor, [{ field: 'photos', oldValue: `${count} foto(s)`, newValue: `${count + 1} foto(s) — adicionada ${stored.url}` }]);
+    });
     this.realtime.restaurantUpdated(id);
     return this.get(id);
   }
 
-  async removePhoto(id: string, photoId: string): Promise<AdminEstablishmentDto> {
+  async removePhoto(id: string, photoId: string, actor: ChangeActor): Promise<AdminEstablishmentDto> {
     const photo = await this.prisma.establishmentPhoto.findFirst({ where: { id: photoId, establishmentId: id } });
     if (!photo) throw notFound('Foto não encontrada.');
-    await this.prisma.establishmentPhoto.delete({ where: { id: photoId } });
+    await this.prisma.$transaction(async tx => {
+      const count = await tx.establishmentPhoto.count({ where: { establishmentId: id } });
+      await tx.establishmentPhoto.delete({ where: { id: photoId } });
+      await this.changeLog.record(tx, id, actor, [{ field: 'photos', oldValue: `${count} foto(s) — removida ${photo.url}`, newValue: `${count - 1} foto(s)` }]);
+    });
     await this.images.discard(photo.storageKey);
     this.realtime.restaurantUpdated(id);
     return this.get(id);

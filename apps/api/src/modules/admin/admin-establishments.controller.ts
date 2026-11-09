@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put, 
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { PlatformAdmin } from '../access/access.decorators.js';
+import { CurrentAuth } from '../auth/auth.decorators.js';
+import type { AuthContext } from '../auth/auth.types.js';
 import { ImageFileInterceptor } from '../storage/image-upload.interceptor.js';
 import { AdminEstablishmentsService } from './admin-establishments.service.js';
 import {
@@ -38,29 +40,29 @@ export class AdminEstablishmentsController {
   @Post('establishments')
   @ApiOperation({ summary: 'Cadastra um estabelecimento vinculado a uma organização e a um plano' })
   @ApiErrors(400, 422)
-  create(@Body() dto: CreateEstablishmentDto): Promise<AdminEstablishmentResponseDto> {
-    return this.establishments.create(dto);
+  create(@Body() dto: CreateEstablishmentDto, @CurrentAuth() auth: AuthContext): Promise<AdminEstablishmentResponseDto> {
+    return this.establishments.create(dto, { userId: auth.userId, name: auth.name });
   }
 
   @Patch('establishments/:id')
   @ApiOperation({ summary: 'Edita dados, localização e horários de funcionamento' })
   @ApiErrors(400, 404, 422)
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateEstablishmentDto): Promise<AdminEstablishmentResponseDto> {
-    return this.establishments.update(id, dto);
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateEstablishmentDto, @CurrentAuth() auth: AuthContext): Promise<AdminEstablishmentResponseDto> {
+    return this.establishments.update(id, dto, { userId: auth.userId, name: auth.name });
   }
 
   @Patch('establishments/:id/status')
   @ApiOperation({ summary: 'Ativa, desativa ou suspende (inativo/suspenso some do cliente na hora)' })
   @ApiErrors(400, 404)
-  setStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetEstablishmentStatusDto): Promise<AdminEstablishmentResponseDto> {
-    return this.establishments.setStatus(id, dto.status);
+  setStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetEstablishmentStatusDto, @CurrentAuth() auth: AuthContext): Promise<AdminEstablishmentResponseDto> {
+    return this.establishments.setStatus(id, dto.status, { userId: auth.userId, name: auth.name });
   }
 
   @Put('establishments/:id/plan')
   @ApiOperation({ summary: 'Migra o estabelecimento de plano (recursos liberados/bloqueados na hora, ficha 37)' })
   @ApiErrors(400, 404, 422)
-  setPlan(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetEstablishmentPlanDto): Promise<AdminEstablishmentResponseDto> {
-    return this.establishments.setPlan(id, dto.planId);
+  setPlan(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetEstablishmentPlanDto, @CurrentAuth() auth: AuthContext): Promise<AdminEstablishmentResponseDto> {
+    return this.establishments.setPlan(id, dto.planId, { userId: auth.userId, name: auth.name });
   }
 
   @Post('establishments/:id/photos')
@@ -69,15 +71,15 @@ export class AdminEstablishmentsController {
   @ApiBody({ schema: { type: 'object', required: ['file'], properties: { file: { type: 'string', format: 'binary' } } } })
   @ApiOperation({ summary: 'Adiciona uma foto à galeria (PNG, JPG ou WEBP)' })
   @ApiErrors(400, 404, 413, 422)
-  addPhoto(@Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File | undefined): Promise<AdminEstablishmentResponseDto> {
-    return this.establishments.addPhoto(id, file);
+  addPhoto(@Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File | undefined, @CurrentAuth() auth: AuthContext): Promise<AdminEstablishmentResponseDto> {
+    return this.establishments.addPhoto(id, file, { userId: auth.userId, name: auth.name });
   }
 
   @Delete('establishments/:id/photos/:photoId')
   @ApiOperation({ summary: 'Remove uma foto da galeria' })
   @ApiErrors(404)
-  removePhoto(@Param('id', ParseUUIDPipe) id: string, @Param('photoId', ParseUUIDPipe) photoId: string): Promise<AdminEstablishmentResponseDto> {
-    return this.establishments.removePhoto(id, photoId);
+  removePhoto(@Param('id', ParseUUIDPipe) id: string, @Param('photoId', ParseUUIDPipe) photoId: string, @CurrentAuth() auth: AuthContext): Promise<AdminEstablishmentResponseDto> {
+    return this.establishments.removePhoto(id, photoId, { userId: auth.userId, name: auth.name });
   }
 
   @Get('organizations')

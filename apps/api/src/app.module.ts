@@ -14,10 +14,12 @@ import { AccessTokenGuard } from './modules/auth/access-token.guard.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { EstablishmentsModule } from './modules/establishments/establishments.module.js';
+import { EstablishmentHistoryModule } from './modules/establishment-history/establishment-history.module.js';
 import { FavoritesModule } from './modules/favorites/favorites.module.js';
 import { FloorPlanModule } from './modules/floor-plan/floor-plan.module.js';
 import { InboxModule } from './modules/inbox/inbox.module.js';
 import { HealthController } from './modules/health/health.controller.js';
+import { IngredientLotsModule } from './modules/ingredient-lots/ingredient-lots.module.js';
 import { KitchenModule } from './modules/kitchen/kitchen.module.js';
 import { LoyaltyModule } from './modules/loyalty/loyalty.module.js';
 import { MeModule } from './modules/me/me.module.js';
@@ -29,6 +31,10 @@ import { PromotionsModule } from './modules/promotions/promotions.module.js';
 import { RealtimeGatewayModule } from './modules/realtime/realtime-gateway.module.js';
 import { RealtimeModule } from './modules/realtime/realtime.module.js';
 import { ReviewsModule } from './modules/reviews/reviews.module.js';
+import { ReportsModule } from './modules/reports/reports.module.js';
+import { SupportModule } from './modules/support/support.module.js';
+import { MonitoringModule } from './modules/monitoring/monitoring.module.js';
+import { BillingModule } from './modules/billing/billing.module.js';
 import { ShareModule } from './modules/share/share.module.js';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module.js';
 import { ShiftsModule } from './modules/shifts/shifts.module.js';
@@ -46,6 +52,7 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     RealtimeModule,
     NotificationsModule,
     InboxModule,
+    EstablishmentHistoryModule,
     StorageModule,
     AccessModule,
     // Limite geral: por usuário quando há sessão válida e por IP nas demais requisições. Clientes no Wi-Fi
@@ -86,6 +93,11 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     ReviewsModule,
     ShareModule,
     BookingsModule,
+    ReportsModule,
+    IngredientLotsModule,
+    SupportModule,
+    MonitoringModule,
+    BillingModule,
     OrdersModule,
     AdminModule,
   ],
