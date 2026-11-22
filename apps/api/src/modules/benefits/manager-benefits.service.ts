@@ -67,7 +67,8 @@ export class ManagerBenefitsService {
 
   async listCoupons(establishmentId: string): Promise<CouponDto[]> {
     const now = new Date();
-    const rows = await this.prisma.coupon.findMany({ where: { establishmentId }, orderBy: { createdAt: 'desc' } });
+    // Cupons pessoais de campanha (ficha 68) ficam na tela de campanhas, não na lista de cupons.
+    const rows = await this.prisma.coupon.findMany({ where: { establishmentId, restrictedToUserId: null }, orderBy: { createdAt: 'desc' } });
     const counts = await this.prisma.couponRedemption.groupBy({ by: ['couponId'], where: { coupon: { establishmentId }, order: { NOT: expiredHoldWhere() } }, _count: { _all: true } });
     const used = new Map(counts.map(row => [row.couponId, row._count._all]));
     return rows.map(row => toCouponDto(row, used.get(row.id) ?? 0, now));
@@ -100,7 +101,7 @@ export class ManagerBenefitsService {
   }
 
   async updateCoupon(establishmentId: string, id: string, dto: UpdateCouponDto): Promise<CouponDto> {
-    const current = await this.prisma.coupon.findFirst({ where: { id, establishmentId } });
+    const current = await this.prisma.coupon.findFirst({ where: { id, establishmentId, restrictedToUserId: null } });
     if (!current) throw notFound('Cupom não encontrado.');
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : current.startsAt;
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : current.endsAt;
@@ -124,7 +125,7 @@ export class ManagerBenefitsService {
 
   /** Cupom já usado não é apagado (o pedido guarda o código): desative-o. */
   async removeCoupon(establishmentId: string, id: string): Promise<void> {
-    const coupon = await this.prisma.coupon.findFirst({ where: { id, establishmentId }, select: { id: true, _count: { select: { redemptions: true } } } });
+    const coupon = await this.prisma.coupon.findFirst({ where: { id, establishmentId, restrictedToUserId: null }, select: { id: true, _count: { select: { redemptions: true } } } });
     if (!coupon) throw notFound('Cupom não encontrado.');
     if (coupon._count.redemptions > 0) throw conflict('COUPON_IN_USE', 'Este cupom já foi usado. Desative-o em vez de excluir.');
     await this.prisma.coupon.delete({ where: { id } });

@@ -3,6 +3,7 @@ import { INVOICE_DUE_DAY, INVOICE_REMINDER_DAYS, type BillingRunDto, type Invoic
 import { conflict, notFound } from '../../common/http/app-error.js';
 import { pageArgs, type PageQueryDto } from '../../common/pagination/page-query.dto.js';
 import { localDate } from '../../common/time/day-bounds.js';
+import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { InboxService } from '../inbox/inbox.service.js';
@@ -25,10 +26,11 @@ const toDto = (row: InvoiceRow, today: string): InvoiceDto => ({
   establishmentName: row.establishment.name,
   period: row.period,
   planName: row.planName,
+  kind: row.kind,
   amountCents: row.amountCents,
   dueDate: isoDay(row.dueDate),
   // Pendente vencida já aparece como atrasada, mesmo antes da rotina gravar (o status nunca depende de ela rodar).
-  status: row.status === 'pending' && isoDay(row.dueDate) < today ? 'overdue' : row.status,
+  status: row.status === 'pending' && row.kind !== 'credit' && isoDay(row.dueDate) < today ? 'overdue' : row.status,
   paidAt: row.paidAt?.toISOString() ?? null,
   paymentNote: row.paymentNote,
 });
@@ -79,29 +81,46 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
     return { generated, markedOverdue, notified };
   }
 
-  /** Fatura do mês corrente para cada estabelecimento ativo com plano pago. */
+  /**
+   * Fatura do mês corrente para cada estabelecimento ativo com plano pago. Créditos de downgrade pendentes (ficha 58)
+   * são abatidos aqui, na mesma transação (a mensalidade nunca fica negativa; o que sobrar continua como crédito).
+   */
   async generate(now: Date): Promise<number> {
     const today = localDate(now, BILLING_TIMEZONE);
     const period = today.slice(0, 7);
     const dueDate = new Date(`${period}-${String(INVOICE_DUE_DAY).padStart(2, '0')}T00:00:00Z`);
     const establishments = await this.prisma.establishment.findMany({
-      where: { status: 'active', plan: { monthlyPriceCents: { gt: 0 } }, invoices: { none: { period } } },
+      where: { status: 'active', plan: { monthlyPriceCents: { gt: 0 } }, invoices: { none: { period, kind: 'monthly' } } },
       select: { id: true, createdAt: true, plan: { select: { name: true, monthlyPriceCents: true } } },
     });
     let created = 0;
     for (const establishment of establishments) {
       // Casa cadastrada depois do vencimento do mês começa a ser cobrada no mês seguinte (sem fatura nascendo vencida).
       if (localDate(establishment.createdAt, BILLING_TIMEZONE) > isoDay(dueDate)) continue;
-      const result = await this.prisma.invoice.createMany({
-        data: [{ establishmentId: establishment.id, period, planName: establishment.plan.name, amountCents: establishment.plan.monthlyPriceCents, dueDate }],
-        skipDuplicates: true,
+      const amount = await this.prisma.$transaction(async tx => {
+        await lockResource(tx, `billing:${establishment.id}`);
+        if (await tx.invoice.count({ where: { establishmentId: establishment.id, period, kind: 'monthly' } })) return null;
+        const credits = await tx.invoice.findMany({ where: { establishmentId: establishment.id, kind: 'credit', status: 'pending' }, orderBy: { createdAt: 'asc' } });
+        let amountCents = establishment.plan.monthlyPriceCents;
+        const invoice = await tx.invoice.create({ data: { establishmentId: establishment.id, period, planName: establishment.plan.name, amountCents, dueDate }, select: { id: true, number: true } });
+        for (const credit of credits) {
+          const usable = Math.min(-credit.amountCents, amountCents);
+          if (usable <= 0) break;
+          amountCents -= usable;
+          const left = -credit.amountCents - usable;
+          await tx.invoice.update({ where: { id: credit.id }, data: { status: 'paid', paidAt: now, amountCents: -usable, paymentNote: `Abatido na fatura #${invoice.number}` } });
+          if (left > 0) await tx.invoice.create({ data: { establishmentId: establishment.id, period: credit.period, kind: 'credit', planName: credit.planName, amountCents: -left, dueDate: credit.dueDate } });
+        }
+        if (amountCents !== establishment.plan.monthlyPriceCents) await tx.invoice.update({ where: { id: invoice.id }, data: { amountCents } });
+        return amountCents;
       });
-      if (result.count === 0) continue;
+      if (amount === null) continue;
       created++;
+      const discount = establishment.plan.monthlyPriceCents - amount;
       await this.inbox.notifyEstablishment(establishment.id, {
         kind: 'invoice_issued',
         title: `Fatura de ${monthLabel(period)} disponível`,
-        body: `Plano ${establishment.plan.name}: ${money(establishment.plan.monthlyPriceCents)} com vencimento em ${brDate(isoDay(dueDate))}.`,
+        body: `Plano ${establishment.plan.name}: ${money(amount)}${discount ? ` (crédito de ${money(discount)} abatido)` : ''} com vencimento em ${brDate(isoDay(dueDate))}.`,
         dedupeKey: `invoice_issued:${establishment.id}:${period}`,
         requiredPermission: 'billing.view',
         email: true,
@@ -113,7 +132,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   /** Pendente com vencimento anterior a hoje vira atrasada. */
   async markOverdue(now: Date): Promise<number> {
     const today = new Date(`${localDate(now, BILLING_TIMEZONE)}T00:00:00Z`);
-    const { count } = await this.prisma.invoice.updateMany({ where: { status: 'pending', dueDate: { lt: today } }, data: { status: 'overdue' } });
+    const { count } = await this.prisma.invoice.updateMany({ where: { status: 'pending', kind: { not: 'credit' }, dueDate: { lt: today } }, data: { status: 'overdue' } });
     return count;
   }
 
@@ -179,10 +198,11 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
 
   /** Registra o pagamento (confirmação manual da plataforma). Só pendente/atrasada; repetir é recusado. */
   async markPaid(id: string, actorId: string, note: string | undefined, now = new Date()): Promise<InvoiceDto> {
-    const { count } = await this.prisma.invoice.updateMany({ where: { id, status: { in: ['pending', 'overdue'] } }, data: { status: 'paid', paidAt: now, paidById: actorId, paymentNote: note?.slice(0, 120) ?? null } });
+    const { count } = await this.prisma.invoice.updateMany({ where: { id, kind: { not: 'credit' }, status: { in: ['pending', 'overdue'] } }, data: { status: 'paid', paidAt: now, paidById: actorId, paymentNote: note?.slice(0, 120) ?? null } });
     if (count === 0) {
-      const exists = await this.prisma.invoice.findUnique({ where: { id }, select: { status: true } });
+      const exists = await this.prisma.invoice.findUnique({ where: { id }, select: { status: true, kind: true } });
       if (!exists) throw notFound('Fatura não encontrada.');
+      if (exists.kind === 'credit') throw conflict('INVOICE_NOT_PAYABLE', 'Crédito de troca de plano é abatido automaticamente na próxima mensalidade.');
       throw conflict('INVOICE_NOT_PAYABLE', exists.status === 'paid' ? 'Esta fatura já está paga.' : 'Esta fatura foi cancelada.');
     }
     const invoice = await this.get(id, now);

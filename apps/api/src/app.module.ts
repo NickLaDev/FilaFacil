@@ -36,6 +36,9 @@ import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { ReportsModule } from './modules/reports/reports.module.js';
 import { SupportModule } from './modules/support/support.module.js';
 import { MonitoringModule } from './modules/monitoring/monitoring.module.js';
+import { CampaignsModule } from './modules/campaigns/campaigns.module.js';
+import { PartnersModule } from './modules/partners/partners.module.js';
+import { PlansModule } from './modules/plans/plans.module.js';
 import { PlatformModule } from './modules/platform/platform.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { ShareModule } from './modules/share/share.module.js';
@@ -104,6 +107,9 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     MonitoringModule,
     BillingModule,
     PlatformModule,
+    PartnersModule,
+    CampaignsModule,
+    PlansModule,
     OrdersModule,
     AdminModule,
   ],

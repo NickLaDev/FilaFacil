@@ -28,7 +28,7 @@ export function metricsCsv(data: PlatformMetricsDto): string {
     ...data.byEstablishment.map(row => [row.name, row.orders, brl(row.gmvCents)]),
     ['Total', data.current.totals.orders, brl(data.current.totals.gmvCents)],
   ];
-  return `﻿${lines.map(line => line.map(cell).join(';')).join('\r\n')}\r\n`;
+  return `\uFEFF${lines.map(line => line.map(cell).join(';')).join('\r\n')}\r\n`;
 }
 
 /** PDF A4 com os indicadores, a comparação e a quebra por estabelecimento. */

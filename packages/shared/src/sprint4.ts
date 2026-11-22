@@ -512,6 +512,8 @@ export interface InvoiceDto {
   establishmentName: string;
   period: string;
   planName: string;
+  /** Ficha 58: mensalidade, cobrança proporcional de upgrade ou crédito (negativo) de downgrade. */
+  kind: 'monthly' | 'proration' | 'credit';
   amountCents: number;
   /** AAAA-MM-DD. */
   dueDate: string;

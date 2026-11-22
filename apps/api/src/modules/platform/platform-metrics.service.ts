@@ -96,7 +96,7 @@ export class PlatformMetricsService {
     }
     const names = await this.prisma.establishment.findMany({ where: { id: { in: [...byId.keys()] } }, select: { id: true, name: true } });
     const byEstablishment = names.map(row => ({ id: row.id, name: row.name, ...(byId.get(row.id) as { orders: number; gmvCents: number }) })).sort((a, b) => b.gmvCents - a.gmvCents || a.name.localeCompare(b.name, 'pt-BR'));
-    const strip = ({ rows: _rows, ...period }: MetricsPeriod & { rows: DayRow[] }): MetricsPeriod => period;
+    const strip = (period: MetricsPeriod & { rows: DayRow[] }): MetricsPeriod => ({ from: period.from, to: period.to, series: period.series, totals: period.totals });
     return {
       current: strip(current),
       previous: strip(previous),
