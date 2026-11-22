@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AppConfig } from '../../config/app-config.js';
 import { MeModule } from '../me/me.module.js';
+import { AccessLogController } from './access-log.controller.js';
+import { AccessLogService } from './access-log.service.js';
 import { AccountController } from './account.controller.js';
 import { AccountDeletionService } from './account-deletion.service.js';
 import { AuthController } from './auth.controller.js';
@@ -18,12 +20,13 @@ import { TokenService } from './token.service.js';
 
 @Module({
   imports: [MeModule],
-  controllers: [AuthController, AccountController, WebAuthnController],
+  controllers: [AuthController, AccountController, WebAuthnController, AccessLogController],
   providers: [
     AuthService,
     AccountDeletionService,
     WebAuthnService,
     SessionService,
+    AccessLogService,
     TokenService,
     PasswordHasher,
     CpfProtector,

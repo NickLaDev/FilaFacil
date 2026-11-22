@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } fr
 import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { IsBoolean, IsIn, IsInt, IsISO8601, IsOptional, IsUUID, Matches, Max, Min } from 'class-validator';
-import { BOOKING_MAX_PARTY, BOOKING_STATUSES, type BookingDto, type BookingSlotsDto, type BookingStatus } from '@filafacil/shared';
+import { BOOKING_STATUSES, type BookingDto, type BookingSlotsDto, type BookingStatus } from '@filafacil/shared';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { ToBoolean, ToNumber } from '../../common/validation/transforms.js';
 import { CurrentEstablishment, EstablishmentScoped, RequireAccess } from '../access/access.decorators.js';
@@ -20,7 +20,7 @@ class CreateBookingDto {
 
   @IsInt()
   @Min(1)
-  @Max(BOOKING_MAX_PARTY)
+  @Max(50)
   partySize!: number;
 }
 
@@ -31,7 +31,7 @@ class SlotsQueryDto {
   @ToNumber()
   @IsInt()
   @Min(1)
-  @Max(BOOKING_MAX_PARTY)
+  @Max(50)
   partySize!: number;
 }
 

@@ -6,6 +6,7 @@ import { localDate } from '../../common/time/day-bounds.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { InboxService } from '../inbox/inbox.service.js';
+import { AuditService } from '../audit/audit.service.js';
 
 /** A cobrança da plataforma segue o calendário de Brasília (vencimento e atraso são contados por dia civil). */
 export const BILLING_TIMEZONE = 'America/Sao_Paulo';
@@ -57,6 +58,7 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inbox: InboxService,
+    private readonly audit: AuditService,
   ) {}
 
   onModuleInit() {
@@ -183,7 +185,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       if (!exists) throw notFound('Fatura não encontrada.');
       throw conflict('INVOICE_NOT_PAYABLE', exists.status === 'paid' ? 'Esta fatura já está paga.' : 'Esta fatura foi cancelada.');
     }
-    return this.get(id, now);
+    const invoice = await this.get(id, now);
+    await this.audit.recordSafely({ action: 'invoice.paid', targetType: 'invoice', targetId: id, summary: `Pagamento da fatura ${invoice.period} de ${invoice.establishmentName} registrado (R$ ${(invoice.amountCents / 100).toFixed(2)})`, details: { note: note ?? null } });
+    return invoice;
   }
 
   async cancel(id: string, now = new Date()): Promise<InvoiceDto> {
@@ -193,7 +197,9 @@ export class BillingService implements OnModuleInit, OnModuleDestroy {
       if (!exists) throw notFound('Fatura não encontrada.');
       throw conflict('INVOICE_NOT_CANCELLABLE', 'Só faturas pendentes ou atrasadas podem ser canceladas.');
     }
-    return this.get(id, now);
+    const invoice = await this.get(id, now);
+    await this.audit.recordSafely({ action: 'invoice.cancelled', targetType: 'invoice', targetId: id, summary: `Fatura ${invoice.period} de ${invoice.establishmentName} cancelada` });
+    return invoice;
   }
 
   private async get(id: string, now: Date): Promise<InvoiceDto> {

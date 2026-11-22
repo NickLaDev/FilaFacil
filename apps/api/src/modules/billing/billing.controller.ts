@@ -10,6 +10,7 @@ import type { EstablishmentContext } from '../access/access.types.js';
 import { CurrentAuth } from '../auth/auth.decorators.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { BillingService } from './billing.service.js';
+import { AuditService } from '../audit/audit.service.js';
 
 class InvoicesQueryDto extends PageQueryDto {
   @IsOptional()
@@ -42,7 +43,10 @@ class PayInvoiceDto {
 @PlatformAdmin('platform.billing')
 @Controller('admin')
 export class AdminBillingController {
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Get('invoices')
   @ApiOperation({ summary: 'Faturas de todos os estabelecimentos: pago, pendente ou atrasado (ficha 38)' })
@@ -53,8 +57,10 @@ export class AdminBillingController {
   @Post('billing/run')
   @HttpCode(200)
   @ApiOperation({ summary: 'Executa a rotina de cobrança agora: gera as faturas do mês, marca atrasadas e avisa (idempotente)' })
-  run(): Promise<BillingRunDto> {
-    return this.billing.runCycle();
+  async run(): Promise<BillingRunDto> {
+    const result = await this.billing.runCycle();
+    await this.audit.recordSafely({ action: 'billing.run', targetType: 'billing', summary: `Cobrança executada manualmente: ${result.generated} gerada(s), ${result.markedOverdue} atrasada(s), ${result.notified} aviso(s)`, details: { ...result } });
+    return result;
   }
 
   @Post('invoices/:id/pay')

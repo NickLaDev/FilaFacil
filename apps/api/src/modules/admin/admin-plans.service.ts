@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service.js';
 import { Injectable } from '@nestjs/common';
 import type { PlanDto } from '@filafacil/shared';
 import { conflict, notFound } from '../../common/http/app-error.js';
@@ -33,6 +34,7 @@ export class AdminPlansService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(): Promise<PlanDto[]> {
@@ -53,6 +55,7 @@ export class AdminPlansService {
         },
         include: PLAN_INCLUDE,
       });
+      await this.audit.recordSafely({ action: 'plan.created', targetType: 'plan', targetId: plan.id, summary: `Plano ${plan.name} criado (R$ ${(plan.monthlyPriceCents / 100).toFixed(2)})`, details: { ...dto } });
       return toPlanDto(plan);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw nameTaken();
@@ -79,6 +82,7 @@ export class AdminPlansService {
         });
       });
       for (const establishment of plan.establishments) this.realtime.establishmentUpdated(establishment.id);
+      await this.audit.recordSafely({ action: 'plan.updated', targetType: 'plan', targetId: id, summary: `Plano ${plan.name} alterado`, details: { ...dto } });
       return toPlanDto(plan);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw nameTaken();
@@ -92,5 +96,6 @@ export class AdminPlansService {
     if (!plan) throw notFound('Plano não encontrado.');
     if (plan._count.establishments > 0) throw conflict('PLAN_IN_USE', 'Migre os estabelecimentos para outro plano antes de excluir.');
     await this.prisma.plan.delete({ where: { id } });
+    await this.audit.recordSafely({ action: 'plan.deleted', targetType: 'plan', targetId: id, summary: `Plano ${plan.name} excluído` });
   }
 }

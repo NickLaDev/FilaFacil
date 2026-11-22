@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service.js';
 import { Injectable } from '@nestjs/common';
 import {
   isPermission,
@@ -67,6 +68,7 @@ export class AdminUsersService {
     private readonly prisma: PrismaService,
     private readonly sessions: SessionService,
     private readonly realtime: RealtimeService,
+    private readonly auditLog: AuditService,
   ) {}
 
   async list(query: ListUsersQueryDto): Promise<AdminUsersPage> {
@@ -123,6 +125,7 @@ export class AdminUsersService {
       await tx.establishmentMembership.deleteMany({ where: { userId: id, establishmentId: { notIn: establishmentIds } } });
       await tx.establishmentMembership.createMany({ data: establishmentIds.map(establishmentId => ({ userId: id, establishmentId })), skipDuplicates: true });
       await tx.permissionAuditLog.createMany({ data: entries.map(entry => ({ ...entry, targetUserId: id, actorId: actor.userId })) });
+      await this.auditLog.record({ action: 'user.access_changed', targetType: 'user', targetId: id, summary: `Acesso de ${user.name} alterado: ${entries.map(entry => entry.description).join(' · ')}`.slice(0, 300), details: { role: dto.role, permissions, establishmentIds } }, tx);
       return true;
     });
     if (changed) this.realtime.staffAccessChanged(id);
@@ -148,6 +151,7 @@ export class AdminUsersService {
           after: { status },
         },
       });
+      await this.auditLog.record({ action: status === 'suspended' ? 'user.suspended' : 'user.reactivated', targetType: 'user', targetId: id, summary: status === 'suspended' ? 'Usuário suspenso (sessões encerradas)' : 'Usuário reativado' }, tx);
       return true;
     });
     if (changed && status === 'suspended') await this.sessions.revokeAllForUser(id, 'suspended');

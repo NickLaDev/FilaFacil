@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf } from 'class-validator';
 import { ALLERGEN_KEYS, EMAIL_MAX_LENGTH } from '@filafacil/shared';
 import { Trim } from '../../../common/validation/transforms.js';
 
@@ -31,6 +31,12 @@ export class UpdateProfileDto {
   @ArrayUnique()
   @IsIn(ALLERGEN_KEYS, { each: true })
   dietaryRestrictions?: string[];
+
+  /** Ficha 68: data de nascimento (AAAA-MM-DD); null remove. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Use a data no formato AAAA-MM-DD.' })
+  birthDate?: string | null;
 }
 
 export class CreateAddressDto {

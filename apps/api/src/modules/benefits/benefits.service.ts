@@ -15,6 +15,7 @@ import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import { Prisma, type Coupon } from '../../generated/prisma/client.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 type Db = PrismaTx | PrismaService;
 
@@ -67,15 +68,18 @@ export class BenefitsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly settings: SettingsService,
   ) {}
 
   // ─── Cupom ────────────────────────────────────────────────────────────────
 
   /** Valida o cupom para este cliente, estabelecimento e subtotal. Lança 422 com código e mensagem claros. */
   async resolveCoupon(client: Db, input: { userId: string; establishmentId: string; code: string; subtotalCents: number; now: Date }): Promise<ResolvedCoupon> {
+    await this.settings.assertEnabled('features.coupons', 'Cupons estão temporariamente indisponíveis.');
     const code = normalizeCouponCode(input.code);
     const coupon = await client.coupon.findUnique({ where: { establishmentId_code: { establishmentId: input.establishmentId, code } } });
-    if (!coupon) throw unprocessable('COUPON_INVALID', 'Cupom inválido. Confira o código digitado.');
+    // Cupom pessoal de campanha (ficha 68) de outro cliente responde como inexistente.
+    if (!coupon || (coupon.restrictedToUserId && coupon.restrictedToUserId !== input.userId)) throw unprocessable('COUPON_INVALID', 'Cupom inválido. Confira o código digitado.');
     if (!coupon.active) throw unprocessable('COUPON_INACTIVE', 'Este cupom não está mais disponível.');
     if (input.now < coupon.startsAt) throw unprocessable('COUPON_NOT_STARTED', 'Este cupom ainda não está valendo.');
     if (input.now > coupon.endsAt) throw unprocessable('COUPON_EXPIRED', 'Este cupom expirou.');
@@ -135,6 +139,7 @@ export class BenefitsService {
   /** Dentro da transação do pedido: confere o saldo sob lock e grava a saída no razão. */
   async reserveCashback(tx: PrismaTx, userId: string, orderId: string, cents: number, payableCents: number): Promise<void> {
     if (cents <= 0) return;
+    await this.settings.assertEnabled('features.cashback', 'O cashback está temporariamente indisponível.');
     await lockResource(tx, `cashback:${userId}`);
     const balance = await this.balance(tx, userId);
     if (cents > balance) throw unprocessable('INVALID_CASHBACK', 'Saldo de cashback insuficiente.');
@@ -150,6 +155,7 @@ export class BenefitsService {
    */
   async cashbackForOrder(client: Db, input: { establishmentId: string; lines: PricedLine[]; subtotalCents: number; netCents: number; now: Date }): Promise<{ cents: number; ruleId: string | null }> {
     if (input.subtotalCents <= 0 || input.netCents <= 0) return { cents: 0, ruleId: null };
+    if (!(await this.settings.enabled('features.cashback'))) return { cents: 0, ruleId: null };
     const rules = await client.cashbackRule.findMany({
       where: { establishmentId: input.establishmentId, active: true },
       include: { promotion: { select: { startsAt: true, endsAt: true, items: { select: { menuItemId: true } } } } },

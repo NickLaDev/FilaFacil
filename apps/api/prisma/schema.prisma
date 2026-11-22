@@ -56,6 +56,8 @@ model User {
   onboardingCompletedAt DateTime?  @map("onboarding_completed_at") @db.Timestamptz(3)
   /// Restrições alimentares e alergias do cliente (ficha 64): chaves do catálogo `ALLERGENS` em @filafacil/shared.
   dietaryRestrictions   String[]   @default([]) @map("dietary_restrictions")
+  /// Data de nascimento (opcional): campanhas de aniversário (ficha 68).
+  birthDate             DateTime?  @map("birth_date") @db.Date
   lastAccessAt          DateTime?  @map("last_access_at") @db.Timestamptz(3)
   /// Conta excluída a pedido do titular (LGPD): dados pessoais anonimizados, pedidos mantidos sem identificação.
   deletedAt             DateTime?  @map("deleted_at") @db.Timestamptz(3)
@@ -87,6 +89,9 @@ model User {
   reviews             Review[]
   notifications       AppNotification[]
   supportTickets      SupportTicket[]
+  organizationRoles   OrganizationMember[]
+  accessLogs          AccessLog[]
+  campaignGrants      CampaignGrant[]
 
   @@index([role, status])
   @@index([createdAt])
@@ -110,6 +115,8 @@ model EstablishmentMembership {
   id              String   @id @default(uuid()) @db.Uuid
   userId          String   @map("user_id") @db.Uuid
   establishmentId String   @map("establishment_id") @db.Uuid
+  /// Vínculo criado pela organização (admin da rede, ficha 35): sai junto quando o papel na rede é removido.
+  organizationId  String?  @map("organization_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -342,6 +349,7 @@ model Organization {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   establishments Establishment[]
+  members        OrganizationMember[]
 
   @@map("organizations")
 }
@@ -377,41 +385,44 @@ model Establishment {
   createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organization      Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  plan              Plan                         @relation(fields: [planId], references: [id], onDelete: Restrict)
-  photos            EstablishmentPhoto[]
-  openingHours      OpeningHour[]
-  memberships       EstablishmentMembership[]
-  menuCategories    MenuCategory[]
-  menuItems         MenuItem[]
-  promotions        Promotion[]
-  ingredients       Ingredient[]
-  floorPlan         FloorPlan?
-  diningTables      DiningTable[]
-  waitlistEntries   WaitlistEntry[]
-  availabilityLog   MenuItemAvailabilityChange[]
-  orders            Order[]
-  favoritedBy       Favorite[]
-  tableCalls        TableCall[]
-  tableGroups       TableGroup[]
-  tableReservations TableReservation[]
-  itemRankings      MenuItemRanking[]
-  kitchenStations   KitchenStation[]
-  printers          Printer[]
-  shifts            Shift[]
-  tabs              Tab[]
-  staffAlerts       StaffAlert[]
-  cashbackRules     CashbackRule[]
-  coupons           Coupon[]
-  bookings          Booking[]
-  reviews           Review[]
-  notifications     AppNotification[]
-  shareVisits       ShareVisit[]
-  supportTickets    SupportTicket[]
-  integrations      Integration[]
-  incidents         Incident[]
-  invoices          Invoice[]
-  changeLog         EstablishmentChange[]
+  organization       Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  plan               Plan                         @relation(fields: [planId], references: [id], onDelete: Restrict)
+  photos             EstablishmentPhoto[]
+  openingHours       OpeningHour[]
+  memberships        EstablishmentMembership[]
+  menuCategories     MenuCategory[]
+  menuItems          MenuItem[]
+  promotions         Promotion[]
+  ingredients        Ingredient[]
+  floorPlan          FloorPlan?
+  diningTables       DiningTable[]
+  waitlistEntries    WaitlistEntry[]
+  availabilityLog    MenuItemAvailabilityChange[]
+  orders             Order[]
+  favoritedBy        Favorite[]
+  tableCalls         TableCall[]
+  tableGroups        TableGroup[]
+  tableReservations  TableReservation[]
+  itemRankings       MenuItemRanking[]
+  kitchenStations    KitchenStation[]
+  printers           Printer[]
+  shifts             Shift[]
+  tabs               Tab[]
+  staffAlerts        StaffAlert[]
+  cashbackRules      CashbackRule[]
+  coupons            Coupon[]
+  bookings           Booking[]
+  reviews            Review[]
+  notifications      AppNotification[]
+  shareVisits        ShareVisit[]
+  supportTickets     SupportTicket[]
+  integrations       Integration[]
+  incidents          Incident[]
+  invoices           Invoice[]
+  changeLog          EstablishmentChange[]
+  planChanges        PlanChange[]
+  campaigns          SegmentCampaign[]
+  partnerApplication PartnerApplication?
 
   @@index([status, latitude, longitude])
   @@index([organizationId])
@@ -1320,24 +1331,27 @@ enum CouponDiscountType {
 
 /// Cupom de campanha (ficha 56): código único por estabelecimento; uso único por cliente.
 model Coupon {
-  id              String             @id @default(uuid()) @db.Uuid
-  establishmentId String             @map("establishment_id") @db.Uuid
-  code            String             @db.VarChar(32)
-  description     String             @default("") @db.VarChar(120)
-  discountType    CouponDiscountType @map("discount_type")
+  id                 String             @id @default(uuid()) @db.Uuid
+  establishmentId    String             @map("establishment_id") @db.Uuid
+  code               String             @db.VarChar(32)
+  description        String             @default("") @db.VarChar(120)
+  discountType       CouponDiscountType @map("discount_type")
   /// Percentual (1–100) ou centavos, conforme o tipo.
-  discountValue   Int                @map("discount_value")
-  minOrderCents   Int                @default(0) @map("min_order_cents")
-  startsAt        DateTime           @map("starts_at") @db.Timestamptz(3)
-  endsAt          DateTime           @map("ends_at") @db.Timestamptz(3)
+  discountValue      Int                @map("discount_value")
+  minOrderCents      Int                @default(0) @map("min_order_cents")
+  startsAt           DateTime           @map("starts_at") @db.Timestamptz(3)
+  endsAt             DateTime           @map("ends_at") @db.Timestamptz(3)
   /// Limite total de usos (nulo = ilimitado).
-  maxUses         Int?               @map("max_uses")
-  active          Boolean            @default(true)
-  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  maxUses            Int?               @map("max_uses")
+  /// Cupom pessoal (campanha segmentada, ficha 68): só este cliente pode usar.
+  restrictedToUserId String?            @map("restricted_to_user_id") @db.Uuid
+  active             Boolean            @default(true)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   establishment Establishment      @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
   redemptions   CouponRedemption[]
+  grant         CampaignGrant?
 
   @@unique([establishmentId, code])
   @@map("coupons")
@@ -1526,6 +1540,7 @@ enum IntegrationKind {
   pdv
   erp
   delivery
+  payment
   other
 
   @@map("integration_kind")
@@ -1550,11 +1565,16 @@ model Integration {
   keyHash         String            @map("key_hash") @db.Char(64)
   status          IntegrationStatus @default(unknown)
   lastSeenAt      DateTime?         @map("last_seen_at") @db.Timestamptz(3)
+  /// Ficha 40: desativada não é monitorada nem abre incidente.
+  enabled         Boolean           @default(true)
+  /// URL de saúde (https) testada pelo monitor e pelo teste manual; nula = só heartbeat.
+  healthUrl       String?           @map("health_url") @db.VarChar(300)
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishment Establishment      @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
   incidents     Incident[]
+  checks        IntegrationCheck[]
 
   @@unique([establishmentId, name])
   @@index([keyHash])
@@ -1581,6 +1601,14 @@ model Incident {
   @@map("incidents")
 }
 
+enum InvoiceKind {
+  monthly
+  proration
+  credit
+
+  @@map("invoice_kind")
+}
+
 enum InvoiceStatus {
   pending
   paid
@@ -1597,6 +1625,9 @@ model Invoice {
   establishmentId String        @map("establishment_id") @db.Uuid
   /// Competência no formato AAAA-MM.
   period          String        @db.VarChar(7)
+  /// monthly = mensalidade (única por casa+mês, índice parcial); proration = diferença de troca de plano;
+  /// credit = crédito de downgrade (valor negativo), abatido na próxima mensalidade.
+  kind            InvoiceKind   @default(monthly)
   planName        String        @map("plan_name") @db.VarChar(40)
   amountCents     Int           @map("amount_cents")
   dueDate         DateTime      @map("due_date") @db.Date
@@ -1611,7 +1642,7 @@ model Invoice {
 
   establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
 
-  @@unique([establishmentId, period])
+  @@index([establishmentId, period])
   @@index([status, dueDate])
   @@map("invoices")
 }
@@ -1631,4 +1662,231 @@ model EstablishmentChange {
 
   @@index([establishmentId, createdAt(sort: Desc)])
   @@map("establishment_changes")
+}
+
+// ─── Sprint 5 ───────────────────────────────────────────────────────────────
+
+enum OrganizationRole {
+  admin
+  viewer
+
+  @@map("organization_role")
+}
+
+/// Papel do usuário em uma organização (ficha 35). `admin` ganha vínculo com todas as unidades da rede
+/// (materializado em establishment_memberships com organization_id); `viewer` só vê o relatório consolidado.
+model OrganizationMember {
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           OrganizationRole
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+/// Teste de conexão de uma integração (ficha 40): manual ou pelo monitor. Histórico de falhas.
+model IntegrationCheck {
+  id            String   @id @default(uuid()) @db.Uuid
+  integrationId String   @map("integration_id") @db.Uuid
+  ok            Boolean
+  latencyMs     Int?     @map("latency_ms")
+  error         String?  @db.VarChar(200)
+  /// manual | monitor
+  trigger       String   @db.VarChar(20)
+  actorId       String?  @map("actor_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId, createdAt(sort: Desc)])
+  @@map("integration_checks")
+}
+
+/// Log de auditoria das ações sensíveis (ficha 42). Somente inserção (trigger no banco).
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  actorName  String   @map("actor_name") @db.VarChar(120)
+  actorRole  String?  @map("actor_role") @db.VarChar(20)
+  action     String   @db.VarChar(60)
+  targetType String   @map("target_type") @db.VarChar(40)
+  targetId   String?  @map("target_id") @db.VarChar(64)
+  summary    String   @db.VarChar(300)
+  details    Json?
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+/// Configuração/flag da plataforma (ficha 43). O catálogo (tipo, padrão, limites) fica em @filafacil/shared.
+model PlatformSetting {
+  key         String   @id @db.VarChar(60)
+  value       Json
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("platform_settings")
+}
+
+/// Login com data, hora, IP e dispositivo (ficha 52).
+model AccessLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  sessionId   String?  @map("session_id") @db.Uuid
+  ipAddress   String?  @map("ip_address") @db.VarChar(64)
+  userAgent   String?  @map("user_agent") @db.VarChar(255)
+  /// SHA-256 do identificador do aparelho (cookie próprio); nunca o identificador em claro.
+  deviceHash  String   @map("device_hash") @db.Char(64)
+  deviceLabel String   @map("device_label") @db.VarChar(80)
+  /// password | code | google | apple | passkey | signup
+  method      String   @db.VarChar(20)
+  newDevice   Boolean  @map("new_device")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, deviceHash])
+  @@index([createdAt(sort: Desc)])
+  @@map("access_logs")
+}
+
+enum PartnerApplicationStatus {
+  pending
+  needs_info
+  approved
+  rejected
+
+  @@map("partner_application_status")
+}
+
+/// Cadastro de novo parceiro aguardando aprovação (ficha 55). O estabelecimento só é criado na aprovação.
+model PartnerApplication {
+  id                String                   @id @default(uuid()) @db.Uuid
+  number            Int                      @unique @default(autoincrement())
+  status            PartnerApplicationStatus @default(pending)
+  businessName      String                   @map("business_name") @db.VarChar(80)
+  type              EstablishmentType
+  document          String                   @db.VarChar(18)
+  city              String                   @db.VarChar(60)
+  address           String                   @db.VarChar(160)
+  latitude          Float
+  longitude         Float
+  /// Funcionamento diário informado no cadastro (minutos desde a meia-noite).
+  opensAt           Int                      @map("opens_at")
+  closesAt          Int                      @map("closes_at")
+  contactName       String                   @map("contact_name") @db.VarChar(120)
+  contactEmail      String                   @map("contact_email") @db.VarChar(254)
+  contactPhone      String                   @map("contact_phone") @db.VarChar(11)
+  notes             String                   @default("") @db.VarChar(1000)
+  infoRequest       String?                  @map("info_request") @db.VarChar(1000)
+  decisionReason    String?                  @map("decision_reason") @db.VarChar(1000)
+  /// SHA-256 do token de acompanhamento entregue ao solicitante (o token em claro nunca é guardado).
+  trackingTokenHash String                   @unique @map("tracking_token_hash") @db.Char(64)
+  establishmentId   String?                  @unique @map("establishment_id") @db.Uuid
+  reviewedById      String?                  @map("reviewed_by_id") @db.Uuid
+  reviewedAt        DateTime?                @map("reviewed_at") @db.Timestamptz(3)
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  establishment Establishment?    @relation(fields: [establishmentId], references: [id], onDelete: SetNull)
+  documents     PartnerDocument[]
+
+  @@index([status, createdAt])
+  @@map("partner_applications")
+}
+
+/// Documento enviado no cadastro (PDF/imagem), guardado fora da pasta pública de uploads.
+model PartnerDocument {
+  id            String   @id @default(uuid()) @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  fileName      String   @map("file_name") @db.VarChar(120)
+  contentType   String   @map("content_type") @db.VarChar(40)
+  sizeBytes     Int      @map("size_bytes")
+  storageKey    String   @map("storage_key") @db.VarChar(80)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  application PartnerApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("partner_documents")
+}
+
+/// Troca de plano pelo próprio gestor (ficha 58), com o valor proporcional cobrado ou creditado.
+model PlanChange {
+  id              String   @id @default(uuid()) @db.Uuid
+  establishmentId String   @map("establishment_id") @db.Uuid
+  fromPlanName    String   @map("from_plan_name") @db.VarChar(40)
+  toPlanId        String   @map("to_plan_id") @db.Uuid
+  toPlanName      String   @map("to_plan_name") @db.VarChar(40)
+  /// Positivo = cobrança proporcional; negativo = crédito na próxima mensalidade.
+  prorationCents  Int      @map("proration_cents")
+  invoiceId       String?  @map("invoice_id") @db.Uuid
+  actorId         String?  @map("actor_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@index([establishmentId, createdAt(sort: Desc)])
+  @@map("plan_changes")
+}
+
+enum CustomerSegment {
+  birthday
+  inactive
+  frequent
+
+  @@map("customer_segment")
+}
+
+/// Campanha segmentada (ficha 68): disparada automaticamente para os clientes do segmento como cupom pessoal.
+model SegmentCampaign {
+  id              String             @id @default(uuid()) @db.Uuid
+  establishmentId String             @map("establishment_id") @db.Uuid
+  name            String             @db.VarChar(60)
+  segment         CustomerSegment
+  /// inactive: sem pedido há N dias; frequent: pelo menos N pedidos nos últimos 30 dias.
+  threshold       Int                @default(0)
+  discountType    CouponDiscountType @map("discount_type")
+  discountValue   Int                @map("discount_value")
+  /// Validade do cupom pessoal gerado, em dias.
+  validDays       Int                @map("valid_days")
+  message         String             @default("") @db.VarChar(200)
+  active          Boolean            @default(true)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  establishment Establishment   @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  grants        CampaignGrant[]
+
+  @@index([establishmentId, active])
+  @@map("segment_campaigns")
+}
+
+/// Envio da campanha a um cliente: único por (campanha, cliente, período) — nunca dispara duas vezes.
+model CampaignGrant {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  couponId   String   @unique @map("coupon_id") @db.Uuid
+  /// Ex.: "2026" (aniversário, uma vez por ano) ou "2026-11" (inativos/frequentes, uma vez por mês).
+  periodKey  String   @map("period_key") @db.VarChar(20)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  campaign SegmentCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coupon   Coupon          @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId, periodKey])
+  @@index([userId])
+  @@map("campaign_grants")
 }

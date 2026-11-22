@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { CLIENT_HEADER } from '@filafacil/shared';
 import type { AppConfig } from './config/app-config.js';
 import { ACCESS_COOKIE } from './modules/auth/auth-cookies.js';
+import { requestContextMiddleware } from './common/request-context.js';
 import { RealtimeIoAdapter } from './modules/realtime/realtime-io.adapter.js';
 import { FileStorage } from './modules/storage/file-storage.js';
 import { LocalFileStorage, UPLOADS_URL_PREFIX } from './modules/storage/local-file-storage.js';
@@ -24,6 +25,7 @@ export function setupApp(app: NestExpressApplication, config: AppConfig) {
   app.disable('x-powered-by');
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
   app.use(cookieParser());
+  app.use(requestContextMiddleware(config.env.COOKIE_SECURE));
   app.useBodyParser('json', { limit: JSON_BODY_LIMIT });
   app.useBodyParser('urlencoded', { limit: FORM_BODY_LIMIT, extended: false });
   app.enableCors({
