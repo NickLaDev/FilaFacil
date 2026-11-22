@@ -7,6 +7,7 @@ import { cn, formatCents, formatDateTime } from '@/lib/utils';
 import EmptyState from '@/components/ui/EmptyState';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
 import { ORDER_STEPS, formatEstimate, orderStatusLabel, useOrder } from '@/services/orderService';
+import { useFeatureEnabled } from '@/services/sprint5Service';
 import { useClient } from '../clientContext';
 import { useClientOrders } from '../hooks/useOrders';
 import { ScreenHeader } from '../components/Layout';
@@ -72,6 +73,7 @@ export function OrdersScreen() {
 /** Linha do tempo atualizada pela API em tempo real, sem recarregar a página (ficha 09). */
 export function OrderTrackingScreen() {
   const { go, orderId, openOrder } = useClient();
+  const reviewsOn = useFeatureEnabled('reviews');
   const { active } = useClientOrders();
   // Sem pedido selecionado, acompanha o pedido em andamento mais recente.
   const trackedId = orderId ?? active?.order.id ?? null;
@@ -233,7 +235,7 @@ export function OrderTrackingScreen() {
             Cancelar pedido
           </button>
         )}
-        {order.canReview && (
+        {order.canReview && reviewsOn && (
           <button onClick={() => openOrder(order.id, 'review')} data-testid="review-cta" className="w-full bg-primary text-primary-foreground rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2">
             <Star size={15} />
             Avaliar pedido
@@ -264,6 +266,7 @@ export function OrderTrackingScreen() {
 /** Comprovante digital do pagamento, montado com os dados confirmados pelo servidor (ficha 04). */
 export function ReceiptScreen() {
   const { go, orderId, showToast, openOrder } = useClient();
+  const reviewsOn = useFeatureEnabled('reviews');
   const query = useOrder(orderId);
   const order = query.data;
   if (!order) {
@@ -344,7 +347,7 @@ export function ReceiptScreen() {
         {order.cashbackEarnCents > 0 && order.status !== 'cancelled' && (
           <p data-testid="cashback-earn" className="text-xs text-success text-center mt-3">Cashback deste pedido: {formatCents(order.cashbackEarnCents)} {order.status === 'delivered' ? '(creditado na sua carteira)' : '(entra no seu saldo quando o pedido for entregue)'}</p>
         )}
-        {order.canReview && (
+        {order.canReview && reviewsOn && (
           <button onClick={() => openOrder(order.id, 'review')} data-testid="review-cta" className="w-full mt-4 bg-primary text-primary-foreground font-display font-semibold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2">
             <Star size={15} />
             Avaliar pedido

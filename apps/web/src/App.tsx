@@ -8,6 +8,7 @@ const PROFILE_APPS = {
   attendant: lazy(() => import('@/apps/attendant/AttendantApp')),
   manager: lazy(() => import('@/apps/manager/ManagerApp')),
   admin: lazy(() => import('@/apps/admin/AdminApp')),
+  partner: lazy(() => import('@/apps/partner/PartnerApp')),
 };
 
 // Ferramenta de desenvolvimento: não entra no build de produção.

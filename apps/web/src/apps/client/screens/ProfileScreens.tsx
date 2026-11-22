@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, CalendarCheck, Check, ChevronRight, CreditCard, Gift, Heart, MapPin, Plus, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, Wallet, type LucideIcon } from 'lucide-react';
+import { Bell, CalendarCheck, Check, ChevronRight, CreditCard, Gift, Heart, MapPin, Plus, ShieldAlert, ShieldCheck, ShoppingBag, Ticket, Trash2, Wallet, type LucideIcon } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { formatPhone, isValidEmail, isValidPhone } from '@/lib/validation';
 import BottomSheet from '@/components/ui/BottomSheet';
@@ -8,6 +8,7 @@ import { errorMessage, isApiError } from '@/lib/api/client';
 import { deleteAddress, saveAddress, setDefaultAddress, updateProfile, useAddresses } from '@/services/profileService';
 import { useMyReservations } from '@/services/reservationService';
 import { useMyBookings, useNotifications } from '@/services/sprint4Service';
+import { useFeatureEnabled } from '@/services/sprint5Service';
 import { BookingList } from './Sprint4Screens';
 import { useClient } from '../clientContext';
 import { FixedBottom, ScreenHeader } from '../components/Layout';
@@ -43,6 +44,8 @@ export function ProfileScreen() {
   const { go, account, isVisitor, signOut } = useClient();
   const [logoutSheet, setLogoutSheet] = useState(false);
   const notifications = useNotifications(Boolean(account));
+  const cashbackOn = useFeatureEnabled('cashback');
+  const couponsOn = useFeatureEnabled('coupons');
 
   async function confirmLogout() {
     setLogoutSheet(false);
@@ -81,7 +84,8 @@ export function ProfileScreen() {
             items={[
               { icon: ShoppingBag, label: 'Meus pedidos', screen: 'orders' },
               { icon: Gift, label: 'FilaZero Club', screen: 'club' },
-              { icon: Wallet, label: 'Meu cashback', screen: 'cashback' },
+              ...(cashbackOn ? [{ icon: Wallet, label: 'Meu cashback', screen: 'cashback' as const }] : []),
+              ...(couponsOn ? [{ icon: Ticket, label: 'Minhas ofertas', screen: 'offers' as const }] : []),
               { icon: CalendarCheck, label: 'Minhas reservas', screen: 'reservations' },
               { icon: Bell, label: 'Notificações', screen: 'notifications', badge: notifications.data?.unread },
               { icon: Heart, label: 'Favoritos', screen: 'favorites' },
@@ -133,6 +137,7 @@ export function EditProfileScreen() {
   const [last, setLast] = useState(rest.join(' '));
   const [phone, setPhone] = useState(account?.phone ? formatPhone(account.phone) : '');
   const [email, setEmail] = useState(account?.email ?? '');
+  const [birthDate, setBirthDate] = useState(account?.birthDate ?? '');
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [serverError, setServerError] = useState<{ field: 'email' | 'phone' | 'form'; message: string } | null>(null);
@@ -143,6 +148,7 @@ export function EditProfileScreen() {
     phone: phone && !isValidPhone(phone) ? 'Celular inválido.' : undefined,
     email: email && !isValidEmail(email) ? 'E-mail inválido.' : undefined,
     contact: !phone && !email ? 'Mantenha ao menos um contato (e-mail ou celular).' : undefined,
+    birthDate: birthDate && birthDate > new Date().toISOString().slice(0, 10) ? 'Data no futuro.' : undefined,
   };
   const hasErrors = Object.values(errors).some(Boolean);
 
@@ -153,7 +159,7 @@ export function EditProfileScreen() {
     if (!account || hasErrors) return;
     setSaving(true);
     try {
-      const updated = await updateProfile({ name: `${first.trim()} ${last.trim()}`.trim(), email: email.trim(), phone });
+      const updated = await updateProfile({ name: `${first.trim()} ${last.trim()}`.trim(), email: email.trim(), phone, birthDate: birthDate || null });
       const contactChanged = updated.user.email !== account.email || updated.user.phone !== account.phone;
       showToast(contactChanged ? 'Dados salvos — confirme o novo contato' : 'Dados salvos');
       go('profile');
@@ -175,6 +181,11 @@ export function EditProfileScreen() {
           error={(submitted ? errors.phone : undefined) ?? (serverError?.field === 'phone' ? serverError.message : undefined)} hint="Alterar o celular exige nova verificação" />
         <TextField label="E-mail" value={email} onChange={setEmail} type="email" autoComplete="email"
           error={(submitted ? errors.email ?? errors.contact : undefined) ?? (serverError?.field === 'email' ? serverError.message : undefined)} hint="Alterar o e-mail exige nova verificação" />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-foreground">Data de nascimento <span className="text-muted-foreground font-normal">(opcional)</span></span>
+          <input type="date" value={birthDate} max={new Date().toISOString().slice(0, 10)} onChange={event => setBirthDate(event.target.value)} data-testid="birth-date" className="w-full border border-border rounded-xl px-4 py-3.5 text-sm bg-card" />
+          <span className={submitted && errors.birthDate ? 'text-xs text-error' : 'text-xs text-muted-foreground'}>{submitted && errors.birthDate ? errors.birthDate : 'Para receber presentes de aniversário dos restaurantes.'}</span>
+        </label>
         {serverError?.field === 'form' && <p className="text-error text-sm">{serverError.message}</p>}
         {account.cpfMasked && <p className="text-xs text-muted-foreground">CPF {account.cpfMasked} · para alterar o CPF, fale com o suporte.</p>}
       </div>

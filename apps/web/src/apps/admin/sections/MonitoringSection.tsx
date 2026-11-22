@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Activity, AlertOctagon, CheckCircle2, KeyRound, Plus, Trash2 } from 'lucide-react';
-import { INTEGRATION_KIND_LABELS, INTEGRATION_KINDS, type IntegrationCreatedDto, type IntegrationDto, type IntegrationKind } from '@filafacil/shared';
+import { Activity, AlertOctagon, CheckCircle2, History, KeyRound, Plus, Power, Trash2, Zap } from 'lucide-react';
+import { INTEGRATION_KIND_LABELS, INTEGRATION_KINDS, INTEGRATION_STATUS_LABELS, type IntegrationCreatedDto, type IntegrationDto, type IntegrationKind } from '@filafacil/shared';
 import FormField, { PANEL_INPUT_CLASS } from '@/components/ui/FormField';
 import Modal from '@/components/ui/Modal';
 import { ErrorBlock, LoadingBlock } from '@/components/ui/QueryState';
@@ -8,16 +8,19 @@ import { useAsyncAction } from '@/lib/useAsyncAction';
 import { cn, formatDateTime } from '@/lib/utils';
 import { useAllEstablishments } from '@/services/establishmentService';
 import { createIntegration, deleteIntegration, rotateIntegrationKey, useIncidentHistory, useMonitoring } from '@/services/sprint4StaffService';
+import { testIntegration, updateIntegration, useIntegrationDetail } from '@/services/sprint5Service';
 import ConfirmDialog from '../components/ConfirmDialog';
 import Pagination from '../components/Pagination';
 import { Pill } from '../components/Pills';
 
 const duration = (seconds: number) => (seconds < 60 ? `${seconds} s` : seconds < 3600 ? `${Math.floor(seconds / 60)} min` : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`);
-const STATUS: Record<IntegrationDto['status'], { label: string; className: string }> = {
-  online: { label: 'Online', className: 'bg-success/10 text-success' },
-  offline: { label: 'Fora do ar', className: 'bg-error/10 text-error' },
-  unknown: { label: 'Sem sinal ainda', className: 'bg-muted text-muted-foreground' },
+const STATUS: Record<IntegrationDto['status'] | 'disabled', { label: string; className: string }> = {
+  online: { label: INTEGRATION_STATUS_LABELS.online, className: 'bg-success/10 text-success' },
+  offline: { label: INTEGRATION_STATUS_LABELS.offline, className: 'bg-error/10 text-error' },
+  unknown: { label: INTEGRATION_STATUS_LABELS.unknown, className: 'bg-muted text-muted-foreground' },
+  disabled: { label: INTEGRATION_STATUS_LABELS.disabled, className: 'bg-muted text-muted-foreground line-through' },
 };
+const displayStatus = (integration: IntegrationDto) => (integration.enabled ? integration.status : 'disabled');
 
 /** Ficha 33: integrações em tempo real, incidente ativo com a contagem de estabelecimentos impactados e histórico de auditoria. */
 export default function MonitoringSection({ notify }: { notify: (message: string) => void }) {
@@ -28,6 +31,7 @@ export default function MonitoringSection({ notify }: { notify: (message: string
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<IntegrationCreatedDto | null>(null);
   const [removing, setRemoving] = useState<IntegrationDto | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   if (overview.error && !overview.data) return <ErrorBlock error={overview.error} onRetry={() => void overview.refetch()} />;
   if (!overview.data) return <LoadingBlock />;
@@ -51,7 +55,7 @@ export default function MonitoringSection({ notify }: { notify: (message: string
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">Cada integração envia sinal com a própria chave. Sem sinal por 30 s ou com falha informada, abre um incidente automaticamente.</p>
+        <p className="text-sm text-muted-foreground">Cada integração envia sinal com a própria chave (ou é testada pela URL de saúde a cada 30 s). Sem sinal, falha informada ou teste falhando: fica indisponível e abre incidente automaticamente. Desative por estabelecimento para parar de monitorar.</p>
         <button onClick={() => setCreating(true)} data-testid="add-integration" className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-xl text-sm font-medium flex-shrink-0"><Plus size={15} />Nova integração</button>
       </div>
 
@@ -61,13 +65,16 @@ export default function MonitoringSection({ notify }: { notify: (message: string
           <tbody>
             {data.integrations.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground"><Activity size={16} className="inline mr-2" />Nenhuma integração cadastrada.</td></tr>}
             {data.integrations.map(integration => (
-              <tr key={integration.id} data-testid="integration-row" data-status={integration.status} className="border-t border-border text-sm">
+              <tr key={integration.id} data-testid="integration-row" data-status={displayStatus(integration)} className="border-t border-border text-sm">
                 <td className="px-4 py-3 font-medium text-foreground">{integration.name} <span className="text-xs text-muted-foreground">· {INTEGRATION_KIND_LABELS[integration.kind]}</span></td>
                 <td className="px-4 py-3 text-muted-foreground">{integration.establishmentName}</td>
-                <td className="px-4 py-3"><Pill className={STATUS[integration.status].className}>{STATUS[integration.status].label}</Pill></td>
+                <td className="px-4 py-3"><Pill className={STATUS[displayStatus(integration)].className}>{STATUS[displayStatus(integration)].label}</Pill></td>
                 <td className="px-4 py-3 text-muted-foreground">{integration.lastSeenAt ? formatDateTime(integration.lastSeenAt) : '—'}</td>
                 <td className="px-4 py-3">
                   <div className="flex gap-1">
+                    <button onClick={() => void run(() => testIntegration(integration.id), `${integration.name}: teste concluído`).then(result => result && notify(`${integration.name}: ${result.status === 'online' ? 'disponível' : 'indisponível — incidente aberto'}`))} disabled={!integration.enabled} title="Testar conexão agora" aria-label={`Testar ${integration.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground disabled:opacity-40"><Zap size={14} /></button>
+                    <button onClick={() => void run(() => updateIntegration(integration.id, { enabled: !integration.enabled }), integration.enabled ? 'Integração desativada' : 'Integração ativada')} title={integration.enabled ? 'Desativar' : 'Ativar'} aria-label={`${integration.enabled ? 'Desativar' : 'Ativar'} ${integration.name}`} className={cn('p-1.5 hover:bg-muted rounded-lg', integration.enabled ? 'text-success' : 'text-muted-foreground')}><Power size={14} /></button>
+                    <button onClick={() => setDetailId(integration.id)} title="Histórico de testes e falhas" aria-label={`Histórico de ${integration.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground"><History size={14} /></button>
                     <button onClick={() => void run(() => rotateIntegrationKey(integration.id).then(setCreated))} title="Gerar nova chave" aria-label={`Gerar nova chave de ${integration.name}`} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground"><KeyRound size={14} /></button>
                     <button onClick={() => setRemoving(integration)} aria-label={`Remover ${integration.name}`} className="p-1.5 hover:bg-error-bg rounded-lg text-muted-foreground hover:text-error"><Trash2 size={14} /></button>
                   </div>
@@ -90,7 +97,7 @@ export default function MonitoringSection({ notify }: { notify: (message: string
                   <td className="px-4 py-3">{formatDateTime(incident.startedAt)}</td>
                   <td className="px-4 py-3 font-medium text-foreground">{incident.integrationName}</td>
                   <td className="px-4 py-3 text-muted-foreground">{incident.establishmentName}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{incident.cause === 'reported' ? 'Falha informada' : 'Sem sinal'}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{incident.cause === 'reported' ? 'Falha informada' : incident.cause === 'check_failed' ? 'Teste de conexão falhou' : 'Sem sinal'}</td>
                   <td className="px-4 py-3 text-muted-foreground">{duration(incident.durationSeconds)}</td>
                   <td className="px-4 py-3"><Pill className={incident.resolvedAt ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}>{incident.resolvedAt ? 'Resolvido' : 'Ativo'}</Pill></td>
                 </tr>
@@ -101,6 +108,7 @@ export default function MonitoringSection({ notify }: { notify: (message: string
         </div>
       </div>
 
+      {detailId && <IntegrationDetailModal id={detailId} notify={notify} onClose={() => setDetailId(null)} />}
       {creating && <IntegrationModal notify={notify} onClose={() => setCreating(false)} onCreated={setCreated} />}
       {created && (
         <Modal title="Chave da integração" onClose={() => setCreated(null)} width="md">
@@ -120,6 +128,7 @@ function IntegrationModal({ notify, onClose, onCreated }: { notify: (message: st
   const [establishmentId, setEstablishmentId] = useState('');
   const [name, setName] = useState('');
   const [kind, setKind] = useState<IntegrationKind>('pdv');
+  const [healthUrl, setHealthUrl] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function submit(event: FormEvent) {
@@ -127,9 +136,10 @@ function IntegrationModal({ notify, onClose, onCreated }: { notify: (message: st
     const next: Record<string, string> = {};
     if (!establishmentId) next.establishment = 'Escolha o estabelecimento.';
     if (name.trim().length < 2) next.name = 'Informe o nome (ex.: PDV Caixa 1).';
+    if (healthUrl.trim() && !/^https?:\/\//.test(healthUrl.trim())) next.healthUrl = 'Use um endereço http(s)://';
     setErrors(next);
     if (Object.keys(next).length) return;
-    const result = await run(() => createIntegration({ establishmentId, name: name.trim(), kind }));
+    const result = await run(() => createIntegration({ establishmentId, name: name.trim(), kind, healthUrl: healthUrl.trim() || null }));
     if (result) {
       onCreated(result);
       onClose();
@@ -147,11 +157,45 @@ function IntegrationModal({ notify, onClose, onCreated }: { notify: (message: st
         </FormField>
         <FormField label="Nome" htmlFor="integration-name" error={errors.name}><input id="integration-name" value={name} onChange={event => setName(event.target.value)} maxLength={60} className={PANEL_INPUT_CLASS} /></FormField>
         <FormField label="Tipo" htmlFor="integration-kind"><select id="integration-kind" value={kind} onChange={event => setKind(event.target.value as IntegrationKind)} className={PANEL_INPUT_CLASS}>{INTEGRATION_KINDS.map(option => <option key={option} value={option}>{INTEGRATION_KIND_LABELS[option]}</option>)}</select></FormField>
+        <FormField label="URL de saúde (opcional)" htmlFor="integration-health" error={errors.healthUrl}><input id="integration-health" value={healthUrl} onChange={event => setHealthUrl(event.target.value)} placeholder="https://api.parceiro.com/health" className={PANEL_INPUT_CLASS} /></FormField>
         <div className="flex gap-3 mt-1">
           <button type="button" onClick={onClose} className="flex-1 border border-border rounded-xl py-2.5 text-sm text-muted-foreground hover:bg-muted">Cancelar</button>
           <button type="submit" disabled={pending} className={cn('flex-1 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold disabled:opacity-60')}>{pending ? 'Criando…' : 'Criar'}</button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/** Histórico de testes (manuais e do monitor) e falhas de uma integração (ficha 40). */
+function IntegrationDetailModal({ id, notify, onClose }: { id: string; notify: (message: string) => void; onClose: () => void }) {
+  const detail = useIntegrationDetail(id);
+  const { run, pending } = useAsyncAction(notify);
+  const data = detail.data;
+  return (
+    <Modal title={data ? `${data.name} · ${data.establishmentName}` : 'Integração'} onClose={onClose} width="lg">
+      {!data ? (
+        <LoadingBlock />
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 flex-wrap text-sm">
+            <Pill className={STATUS[displayStatus(data)].className}>{STATUS[displayStatus(data)].label}</Pill>
+            <span className="text-muted-foreground">{data.healthUrl ? `Testada em ${data.healthUrl}` : 'Testada pelo heartbeat (sem URL de saúde)'}</span>
+            <button disabled={pending || !data.enabled} onClick={() => void run(() => testIntegration(id))} className="ml-auto flex items-center gap-1 border border-border rounded-xl px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"><Zap size={13} />{pending ? 'Testando…' : 'Testar conexão'}</button>
+          </div>
+          <div className="border border-border rounded-xl divide-y divide-border max-h-80 overflow-y-auto">
+            {data.checks.length === 0 && <p className="px-3 py-4 text-sm text-center text-muted-foreground">Nenhum teste registrado ainda.</p>}
+            {data.checks.map(check => (
+              <div key={check.id} data-testid="integration-check" data-ok={check.ok} className="px-3 py-2 text-sm flex items-center gap-3">
+                <Pill className={check.ok ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}>{check.ok ? 'OK' : 'Falhou'}</Pill>
+                <span className="text-muted-foreground">{formatDateTime(check.createdAt)}</span>
+                <span className="text-xs text-muted-foreground">{check.trigger === 'manual' ? 'manual' : 'monitor'}{check.latencyMs !== null ? ` · ${check.latencyMs} ms` : ''}</span>
+                {check.error && <span className="text-xs text-error truncate">{check.error}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

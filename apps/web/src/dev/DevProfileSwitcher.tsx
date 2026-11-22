@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarChart2, Code2, Monitor, RotateCcw, Shield, Smartphone, X } from 'lucide-react';
+import { BarChart2, Code2, Handshake, Monitor, RotateCcw, Shield, Smartphone, X } from 'lucide-react';
 import { resetPersistentStores } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { Profile } from '@/app/profiles';
@@ -9,6 +9,7 @@ const PROFILES: { id: Profile; icon: typeof Smartphone; label: string; sub: stri
   { id: 'attendant', icon: Monitor, label: 'Atendente', sub: 'Tablet' },
   { id: 'manager', icon: BarChart2, label: 'Gestor', sub: 'Painel' },
   { id: 'admin', icon: Shield, label: 'Admin', sub: 'Plataforma' },
+  { id: 'partner', icon: Handshake, label: 'Parceiro', sub: 'Cadastro' },
 ];
 
 interface Props {

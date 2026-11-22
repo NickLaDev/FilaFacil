@@ -8,6 +8,7 @@ Este é o repositório único do projeto (monorepo pnpm):
 - **Sprint 2, blocos 1 a 3** — todas as 14 fichas têm backend e estão integradas à API (pagamento por gateway simulado).
 - **Sprint 3** — operação, mesas/comandas, FilaZero Club e gestão (ver `docs/sprint3-especificacao.md`).
 - **Sprint 4** — 14 fichas: cashback, reservas, avaliações, cartões salvos, cupons, alergias, link compartilhável, custo por período, duplicar item, validade, incidentes, pagamentos da plataforma, suporte e histórico (ver [`docs/sprint4-especificacao.md`](docs/sprint4-especificacao.md)).
+- **Sprint 5** — 12 fichas: painel multi-estabelecimento, organizações, integrações externas, métricas, auditoria, configurações, log de acessos, importação de cardápio, aprovação de parceiros, troca e comparativo de planos e promoção segmentada (ver [`docs/sprint5-especificacao.md`](docs/sprint5-especificacao.md)).
 
 > A interface exibe a marca **FilaZero**, nome usado no protótipo e nas fichas. Para trocar, altere `apps/web/src/config/brand.ts`, `apps/api/src/common/brand.ts` e o `<title>` de `apps/web/index.html`.
 
@@ -106,7 +107,10 @@ Todas com a senha **`FilaFacil123`** (somente desenvolvimento — o seed se recu
 | Atendente | `carlos@bardomestre.com.br` | Bar do Mestre — painel `/atendente` |
 | Atendente suspensa | `mariana@bardomestre.com.br` | Login bloqueado (teste de suspensão) |
 | Integração (PDV) | — | Chave de demonstração `ik_dev_pdv_caixa1_demo_key` em `POST /api/integrations/heartbeat` (cabeçalho `X-Integration-Key`); sem sinal por 30 s abre um incidente |
-| Cliente | `joao@email.com` | Celular `(19) 99999-9999`, CPF `529.982.247-25`, 2 endereços |
+| Cliente | `joao@email.com` | Celular `(19) 99999-9999`, CPF `529.982.247-25`, 2 endereços; aniversário **hoje** (recebe o cupom da campanha de aniversário do Bar do Mestre em "Minhas ofertas") |
+| Novo parceiro | — | Em `/parceiro`, "Acompanhar" com o código `dev-parceiro-cantina-boa-vista-0001` (aguardando análise) ou `dev-parceiro-emporio-do-chopp-0002` (aguardando informações) |
+
+O seed também cria 45 dias de vendas (painel e métricas), mensalidades do mês (uma em atraso), Lucas como **admin da rede** Grupo Bar do Mestre, a integração "Gateway de pagamento" com URL de saúde (o próprio `/api/health` em desenvolvimento) e duas campanhas segmentadas.
 
 **Login por celular/e-mail com código:** em desenvolvimento o código (aleatório, 6 dígitos) aparece no **terminal da API** (`[SMS dev]` / `[E-mail dev]`). Não existe código fixo.
 
@@ -132,6 +136,7 @@ O estado do "provedor" simulado fica num espelho em memória; o PostgreSQL é a 
 | `/atendente` | Atendente | Login de equipe (atendente ou gestor) |
 | `/gestor` | Gestor | Login de equipe (gestor) |
 | `/admin` | Admin | Login de equipe (admin) |
+| `/parceiro` | Novo parceiro | Público: cadastro do estabelecimento e acompanhamento pelo código (ficha 55) |
 
 Em `pnpm dev`, o botão **DEV** alterna entre os perfis. Os perfis compartilham os cookies do navegador: para ficar logado com contas diferentes ao mesmo tempo, use janelas anônimas ou perfis distintos.
 
@@ -179,6 +184,23 @@ Blocos 1 a 3 com backend: QR Code da mesa (02), pagamento (04), carrinho (08), a
 | 66 · Histórico de alterações | Registro automático (autor, campo, antes/depois), somente inserção, com filtros e comparação |
 | 67 · Duplicar item | Formulário preenchido, foto copiada, sem itens ativos idênticos |
 | 70 · Alerta de validade | Lotes por insumo; alerta com antecedência configurável (padrão 7 dias, mínimo 3) e sugestão de pratos |
+
+### Sprint 5 — integrada à API
+
+| Ficha | O que está implementado |
+|---|---|
+| 32 · Painel multi-estabelecimento | Admin → Visão geral: ativos, pedidos, GMV e usuários do dia vs. ontem; totais = soma das casas ativas; casas com problema no topo |
+| 35 · Organizações | Redes com unidades, relatório consolidado, vínculo de unidades e hierarquia (admin da rede acessa todas; visualizador só o relatório); "Minha rede" no gestor |
+| 40 · Integrações externas | Disponível/Indisponível/Desativada, ativar por estabelecimento, teste manual, URL de saúde testada a cada 30 s, incidente automático e histórico de testes |
+| 41 · Métricas | Período livre, gráficos diários (atual × anterior), comparação com outro período, soma por estabelecimento, CSV e PDF |
+| 42 · Auditoria | Registro imutável (trigger) de ações sensíveis com filtros por usuário, ação e data e detalhe antes/depois |
+| 43 · Configurações | Flags e parâmetros globais com efeito em até 10 s, impacto + confirmação nas críticas; o app esconde o que foi desligado |
+| 52 · Acessos e dispositivos | Data, IP, aparelho e método de cada login; aparelho novo marcado e avisado; encerrar sessão em um clique |
+| 54 · Importar cardápio | Modelo CSV, validação sem gravar, cria/atualiza sem duplicar, relatório por linha e planilha de erros para reimportar |
+| 55 · Aprovação de parceiros | Portal público com documentos e código de acompanhamento; fila do admin; aprovado já recebe pedidos; recusado recebe o motivo |
+| 58 · Upgrade/downgrade | Troca pelo gestor, recursos na hora, cobrança proporcional ou crédito abatido na próxima mensalidade, e-mail de confirmação |
+| 68 · Promoção segmentada | Aniversariantes, inativos e frequentes; cupom pessoal automático no dia certo; taxa de uso; "Minhas ofertas" no app |
+| 69 · Comparativo de planos | Planos lado a lado, plano atual destacado, diferenças realçadas e botão de troca |
 
 ## Arquitetura
 
@@ -261,6 +283,9 @@ Documentação completa e interativa em **`/api/docs`** (OpenAPI em `/api/docs/o
 | Equipe · salão e fila | `GET/PUT /establishments/:id/floor-plan`, `POST …/floor-plan/tables/release`, `GET/POST …/waitlist`, `PATCH …/waitlist/:entryId/position`, `POST …/waitlist/:entryId/notify`, `POST …/waitlist/:entryId/seat`, `DELETE …/waitlist/:entryId` |
 | Sprint 4 · cliente | `GET /me/cashback`, `POST /coupons/validate`, `GET/POST /me/payment-methods`, `PUT …/:id/default`, `DELETE …/:id`, `POST /bookings`, `GET /me/bookings`, `POST /bookings/:id/cancel`, `GET /restaurants/:id/booking-slots`, `POST /orders/:id/review`, `GET /restaurants/:id/reviews`, `GET /restaurants/:id/cashback`, `POST /restaurants/:id/share-visits`, `GET /me/notifications`, `POST …/read` |
 | Sprint 4 · equipe | `…/cashback-rules`, `…/coupons`, `…/bookings` (+ `cancel`, `seat`), `…/reports/cost` e `…/reports/cost/export?format=csv\|pdf`, `…/ingredient-lots`, `…/expiry-settings`, `POST …/menu/items/:id/duplicate`, `…/support/tickets`, `…/invoices`, `…/notifications`, `…/share-visits` |
+| Sprint 5 · admin | `GET /admin/overview`, `GET /admin/metrics` (+ `export?format=csv\|pdf`), `GET /admin/organizations/overview`, `GET/PATCH /admin/organizations/:id` (+ `establishments`, `members/:userId`), `GET/PATCH /admin/monitoring/integrations/:id` (+ `test`), `GET /admin/audit`, `GET /admin/settings`, `POST …/:key/impact`, `PUT …/:key`, `GET /admin/access-logs`, `GET /admin/users/:id/access`, `POST /admin/sessions/:id/revoke`, `POST /admin/users/:id/sessions/revoke-all`, `GET /admin/partner-applications` (+ `:id`, `documents/:docId`, `approve`, `reject`, `request-info`) |
+| Sprint 5 · equipe e cliente | `GET …/menu/import/template`, `POST …/menu/import` (multipart CSV, `dryRun`), `GET …/plan/options`, `POST …/plan/change`, `…/campaigns`, `GET /organizations/mine`, `GET /organizations/:id/report`, `GET /me/offers`, `GET /platform/features` |
+| Sprint 5 · público | `POST /partner-applications`, `GET/PATCH /partner-applications/mine` e `POST …/mine/documents` (cabeçalho `X-Partner-Token`) |
 | Sprint 4 · admin | `GET /admin/support/tickets` (+ `messages`, `PATCH`), `GET /admin/monitoring`, `…/incidents`, `…/integrations` (+ `rotate-key`), `POST /integrations/heartbeat` (chave do dispositivo), `GET /admin/invoices` (+ `pay`, `cancel`), `POST /admin/billing/run`, `GET /admin/establishment-changes` |
 | Admin | `GET/POST /admin/establishments`, `GET/PATCH /admin/establishments/:id`, `PATCH …/status`, `PUT …/plan`, `POST/DELETE …/photos`, `GET/POST /admin/organizations`, `GET /admin/users`, `GET /admin/users/:id`, `PATCH …/access`, `PATCH …/status`, `GET /admin/permission-audit`, `GET/POST /admin/plans`, `PATCH/DELETE /admin/plans/:id` |
 
@@ -280,7 +305,8 @@ Schema em `apps/api/prisma/schema.prisma` e migrations em `apps/api/prisma/migra
 | Salão e fila | `floor_plans`, `dining_tables`, `waitlist_entries`, `waitlist_notifications` |
 | Sprint 2, blocos 2 e 3 | `favorites`, `passkeys`, `webauthn_challenges`, `table_groups`, `table_calls`, `table_reservations`, `menu_item_rankings`, `ranking_runs` |
 | Sprint 4 | `app_notifications`, `cashback_rules`, `cashback_ledger`, `coupons`, `coupon_redemptions`, `saved_payment_methods`, `bookings`, `reviews`, `share_visits`, `ingredient_lots`, `support_tickets`, `support_messages`, `integrations`, `incidents`, `invoices`, `establishment_changes` |
-| Auditoria | `permission_audit_logs` |
+| Sprint 5 | `organization_members`, `integration_checks`, `audit_logs`, `platform_settings`, `access_logs`, `partner_applications`, `partner_documents`, `plan_changes`, `segment_campaigns`, `campaign_grants` (+ `users.birth_date`, `invoices.kind`, `coupons.restricted_to_user_id`) |
+| Auditoria | `permission_audit_logs`, `audit_logs` (imutável) |
 
 Todas as datas são `timestamptz`. O horário de funcionamento é guardado em minutos no fuso IANA do estabelecimento.
 
@@ -300,7 +326,7 @@ Todas as datas são `timestamptz`. O horário de funcionamento é guardado em mi
 pnpm test
 ```
 
-453 testes (Vitest):
+486 testes (Vitest):
 
 - **Unitários:** horário/fuso, preço, custo de ficha, estimativa da fila e proteção do CPF.
 - **Integração contra PostgreSQL real** (`filafacil_test`, com migrations aplicadas automaticamente):

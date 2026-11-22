@@ -48,7 +48,7 @@ export async function probeHealthUrl(raw: string, allowPrivate: boolean): Promis
     const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
     const latencyMs = Date.now() - started;
     await response.body?.cancel().catch(() => undefined);
-    return response.ok ? { ok: true, latencyMs, error: null } : { ok: false, latencyMs, error: `Resposta HTTP ${response.status}` };
+    return response.status < 400 ? { ok: true, latencyMs, error: null } : { ok: false, latencyMs, error: `Resposta HTTP ${response.status}` };
   } catch (error) {
     const latencyMs = Date.now() - started;
     const message = error instanceof Error ? (error.name === 'TimeoutError' ? 'Sem resposta em 5 s' : error.message) : 'Falha de conexão';
