@@ -3,6 +3,7 @@ import type { OtpChallengeResponse, OtpChannel } from '@filafacil/shared';
 import { BRAND_NAME } from '../../common/brand.js';
 import { badRequest, conflict, forbidden, unauthorized, unprocessable } from '../../common/http/app-error.js';
 import { lockResource } from '../../database/advisory-lock.js';
+import { AuditService } from '../audit/audit.service.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { EmailSender } from '../notifications/message-senders.js';
 import type { DeleteAccountDto } from './dto/auth.dto.js';
@@ -29,6 +30,7 @@ export class AccountDeletionService {
     private readonly attempts: LoginAttemptsService,
     private readonly sessions: SessionService,
     private readonly email: EmailSender,
+    private readonly audit: AuditService,
   ) {}
 
   /** Código de confirmação para quem não tem senha (ou prefere o código); só vai para contato já verificado. */
@@ -102,6 +104,10 @@ export class AccountDeletionService {
       await tx.webAuthnChallenge.deleteMany({ where: { userId } });
       await tx.tableCall.updateMany({ where: { userId }, data: { userId: null } });
       await tx.session.updateMany({ where: { userId }, data: { revokedAt: now, revokedReason: 'account_deleted', userAgent: null, ipAddress: null } });
+      // Log de acessos (IP e aparelho) é dado pessoal: sai junto (ficha 52 × LGPD).
+      await tx.accessLog.deleteMany({ where: { userId } });
+      // Auditoria (ficha 42): sem dados pessoais — só o id da conta anonimizada.
+      await this.audit.record({ action: 'user.deleted', targetType: 'user', targetId: userId, summary: 'Conta excluída a pedido do titular (dados anonimizados)', actor: { id: userId, name: 'Titular da conta', role: 'client' } }, tx);
     });
     await this.sessions.revokeAllForUser(userId, 'account_deleted'); // avisa os aparelhos conectados
     if (user.email) await this.sendConfirmation(user.email);

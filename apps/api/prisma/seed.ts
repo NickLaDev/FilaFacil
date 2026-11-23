@@ -625,6 +625,99 @@ async function seedSprint4() {
   });
 }
 
+/** Código de acompanhamento do cadastro de parceiro de demonstração (portal /parceiro). Somente desenvolvimento. */
+export const DEV_PARTNER_TOKEN = 'dev-parceiro-cantina-boa-vista-0001';
+
+async function seedSprint5() {
+  // Histórico de vendas (fichas 32, 35 e 41): pedidos pagos e entregues nos últimos 45 dias, determinísticos.
+  let seed = 7;
+  const random = () => {
+    seed = (seed * 48271) % 2147483647;
+    return seed / 2147483647;
+  };
+  const clients = USERS.filter(user => user.role === 'client' && !user.suspended).map(user => SEED_IDS.user(user.n));
+  const byEstablishment = new Map<number, ItemSeed[]>();
+  for (const item of ITEMS) if (item.available !== false) byEstablishment.set(item.est, [...(byEstablishment.get(item.est) ?? []), item]);
+  let n = 0;
+  for (let daysAgo = 45; daysAgo >= 0; daysAgo--) {
+    for (const [est, items] of byEstablishment) {
+      const status = ESTABLISHMENTS.find(e => e.n === est)?.status;
+      if (status !== 'active') continue;
+      const count = Math.floor(random() * (est === 1 ? 7 : 4)) + (daysAgo % 7 === 5 || daysAgo % 7 === 6 ? 2 : 0);
+      for (let i = 0; i < count; i++) {
+        n++;
+        const paidAt = new Date(now - daysAgo * DAY - Math.floor(random() * 8 * 60) * MINUTE - 60 * MINUTE);
+        if (paidAt.getTime() > now) continue;
+        const lines = Array.from({ length: 1 + Math.floor(random() * 3) }, () => items[Math.floor(random() * items.length)] as ItemSeed);
+        const total = lines.reduce((sum, item) => sum + item.price, 0);
+        const orderId = id(30, n);
+        const data = { userId: clients[n % clients.length] as string, establishmentId: SEED_IDS.establishment(est), status: 'delivered' as const, totalCents: total, pickupCode: String(1000 + (n % 9000)).slice(0, 4), paidAt, deliveredAt: new Date(paidAt.getTime() + 25 * MINUTE), createdAt: new Date(paidAt.getTime() - 2 * MINUTE) };
+        await prisma.order.upsert({
+          where: { id: orderId },
+          create: { id: orderId, ...data, items: { create: lines.map(item => ({ menuItemId: SEED_IDS.item(item.n), name: item.name, unitPriceCents: item.price, quantity: 1 })) } },
+          update: data,
+        });
+        const paymentId = id(31, n);
+        const payment = { orderId, attempt: 1, method: 'pix' as const, status: 'approved' as const, amountCents: total, providerPaymentId: `seed-${orderId}`, approvedAt: paidAt };
+        await prisma.payment.upsert({ where: { id: paymentId }, create: { id: paymentId, ...payment }, update: payment });
+      }
+    }
+  }
+
+  // Mensalidade do mês corrente (ficha 38/58): paga em todas as casas ativas, menos uma (exemplo de atraso no painel).
+  const period = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+  for (const e of ESTABLISHMENTS.filter(item => item.status === 'active')) {
+    const establishmentId = SEED_IDS.establishment(e.n);
+    const plan = PLANS.find(item => item.id === e.plan);
+    if (!plan || plan.price <= 0) continue;
+    const invoiceId = id(34, e.n);
+    const overdue = e.n === 2;
+    const data = { establishmentId, period, kind: 'monthly' as const, planName: plan.name, amountCents: plan.price, dueDate: new Date(`${period}-10T00:00:00Z`), status: overdue ? ('pending' as const) : ('paid' as const), paidAt: overdue ? null : at(-DAY) };
+    const existing = await prisma.invoice.findFirst({ where: { establishmentId, period, kind: 'monthly' }, select: { id: true } });
+    if (existing && existing.id !== invoiceId) await prisma.invoice.update({ where: { id: existing.id }, data: { status: data.status, paidAt: data.paidAt } });
+    else await prisma.invoice.upsert({ where: { id: invoiceId }, create: { id: invoiceId, ...data }, update: data });
+  }
+  await prisma.invoice.updateMany({ where: { id: id(20, 2) }, data: { status: 'paid', paidAt: at(-20 * DAY) } });
+
+  // Campanhas (ficha 68): aniversário do João é hoje (demonstração) e uma de volta para inativos.
+  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  await prisma.user.update({ where: { id: SEED_IDS.user(10) }, data: { birthDate: new Date(`1992-${today.slice(5)}T00:00:00Z`) } });
+  const campaigns = [
+    { n: 1, name: 'Presente de aniversário', segment: 'birthday' as const, threshold: 0, discountType: 'percent' as const, discountValue: 20, validDays: 7, message: 'Parabéns! Comemore com a gente.' },
+    { n: 2, name: 'Volta pra gente', segment: 'inactive' as const, threshold: 30, discountType: 'fixed' as const, discountValue: 1000, validDays: 15, message: 'Sentimos sua falta.' },
+  ];
+  for (const campaign of campaigns) {
+    const campaignId = id(32, campaign.n);
+    const data = { establishmentId: SEED_IDS.establishment(1), name: campaign.name, segment: campaign.segment, threshold: campaign.threshold, discountType: campaign.discountType, discountValue: campaign.discountValue, validDays: campaign.validDays, message: campaign.message, active: true };
+    await prisma.segmentCampaign.upsert({ where: { id: campaignId }, create: { id: campaignId, ...data }, update: data });
+  }
+
+  // Integração com URL de saúde (ficha 40): o monitor testa sozinho a cada 30 s. Em desenvolvimento aponta para o
+  // health check da própria API (funciona sem internet); troque pela URL real do parceiro na tela de integrações.
+  const gateway = { establishmentId: SEED_IDS.establishment(1), name: 'Gateway de pagamento', kind: 'payment' as const, healthUrl: `http://localhost:${config.env.API_PORT}/api/health`, keyHash: createHash('sha256').update('ik_dev_gateway_demo_key').digest('hex') };
+  await prisma.integration.upsert({ where: { id: id(19, 2) }, create: { id: id(19, 2), ...gateway }, update: { healthUrl: gateway.healthUrl } });
+
+  // Organização (ficha 35): Lucas é admin da rede do Bar do Mestre; acesso herdado às unidades da rede.
+  const network = SEED_IDS.organization(1);
+  await prisma.organizationMember.upsert({ where: { organizationId_userId: { organizationId: network, userId: SEED_IDS.user(2) } }, create: { organizationId: network, userId: SEED_IDS.user(2), role: 'admin' }, update: { role: 'admin' } });
+
+  // Novos parceiros (ficha 55): um aguardando análise (com código de acompanhamento conhecido) e um aguardando informações.
+  const applications = [
+    { n: 1, status: 'pending' as const, businessName: 'Cantina Boa Vista', type: 'restaurant' as const, document: '11222333000181', address: 'Rua Barão de Jaguara, 900 · Centro', contactName: 'Renata Lima', contactEmail: 'renata@cantinaboavista.com.br', contactPhone: '19988887777', token: DEV_PARTNER_TOKEN, infoRequest: null },
+    { n: 2, status: 'needs_info' as const, businessName: 'Empório do Chopp', type: 'bar' as const, document: '45723174000110', address: 'Av. Norte-Sul, 1500 · Cambuí', contactName: 'Diego Prado', contactEmail: 'diego@emporiodochopp.com.br', contactPhone: '19977776666', token: 'dev-parceiro-emporio-do-chopp-0002', infoRequest: 'Envie o alvará de funcionamento atualizado.' },
+  ];
+  for (const app of applications) {
+    const appId = id(33, app.n);
+    const data = {
+      status: app.status, businessName: app.businessName, type: app.type, document: app.document, city: 'Campinas', address: app.address,
+      latitude: CENTER.lat + 0.004 * app.n, longitude: CENTER.lng - 0.003 * app.n, opensAt: minutes('11:00'), closesAt: minutes('23:00'),
+      contactName: app.contactName, contactEmail: app.contactEmail, contactPhone: app.contactPhone, infoRequest: app.infoRequest,
+      trackingTokenHash: createHash('sha256').update(app.token).digest('hex'),
+    };
+    await prisma.partnerApplication.upsert({ where: { id: appId }, create: { id: appId, ...data, createdAt: at(-app.n * DAY) }, update: data });
+  }
+}
+
 async function main() {
   await seedPlansAndOrganizations();
   await seedEstablishments();
@@ -632,6 +725,7 @@ async function main() {
   await seedMenu();
   await seedFloorAndWaitlist();
   await seedSprint4();
+  await seedSprint5();
   const counts = await Promise.all([
     prisma.establishment.count(),
     prisma.user.count(),

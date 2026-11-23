@@ -87,11 +87,13 @@ const STATUS_CHANGE_COPY: Record<EstablishmentStatus, { title: string; descripti
 
 interface Props {
   notify: (message: string) => void;
+  /** Busca inicial (ao abrir uma unidade a partir da organização). */
+  initialSearch?: string;
 }
 
 /** Ficha 34: cadastro, edição, vínculo com organização e status (ativo, inativo, suspenso). */
-export default function EstablishmentsSection({ notify }: Props) {
-  const [search, setSearch] = useState('');
+export default function EstablishmentsSection({ notify, initialSearch = '' }: Props) {
+  const [search, setSearch] = useState(initialSearch);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [page, setPage] = useState(1);
   const query = useAdminEstablishments({ q: useDebouncedValue(search.trim()), status: statusFilter, page, pageSize: PAGE_SIZE });

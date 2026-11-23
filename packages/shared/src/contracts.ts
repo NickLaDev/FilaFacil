@@ -44,6 +44,8 @@ export interface AuthUser {
   onboardingCompletedAt: string | null;
   /** Ficha 64: restrições alimentares e alergias (chaves de `ALLERGENS`). */
   dietaryRestrictions: string[];
+  /** Ficha 68: data de nascimento (AAAA-MM-DD), opcional — campanhas de aniversário. */
+  birthDate: string | null;
   permissions: Permission[];
   createdAt: string;
 }

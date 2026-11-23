@@ -61,6 +61,8 @@ function refreshSession() {
 
 interface RequestOptions {
   body?: unknown;
+  /** Cabeçalhos extras (ex.: código de acompanhamento do portal do parceiro). */
+  headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | undefined | null>;
   signal?: AbortSignal;
 }
@@ -80,7 +82,7 @@ async function parseError(response: Response): Promise<ApiError> {
 
 async function request<T>(method: string, path: string, options: RequestOptions = {}, retried = false): Promise<T> {
   const isForm = options.body instanceof FormData;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...options.headers };
   if (method !== 'GET') headers[CLIENT_HEADER.name] = CLIENT_HEADER.value;
   if (options.body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
 
@@ -116,6 +118,8 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, { body }),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, { body }),
   delete: <T = void>(path: string, body?: unknown) => request<T>('DELETE', path, { body }),
+  /** Requisição com opções completas (cabeçalhos extras, FormData com campos além do arquivo). */
+  send: <T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, options: RequestOptions = {}) => request<T>(method, path, options),
   upload: <T>(path: string, file: File, method: 'POST' | 'PUT' = 'PUT') => {
     const form = new FormData();
     form.append('file', file);

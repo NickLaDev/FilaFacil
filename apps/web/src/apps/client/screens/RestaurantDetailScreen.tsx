@@ -9,6 +9,7 @@ import { LoadingBlock } from '@/components/ui/QueryState';
 import { useClientLocation } from '@/services/deviceService';
 import { useMyReservation } from '@/services/reservationService';
 import { useRestaurant } from '@/services/restaurantService';
+import { useFeatureEnabled } from '@/services/sprint5Service';
 import { useClient } from '../clientContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { FixedBottom } from '../components/Layout';
@@ -22,6 +23,7 @@ export default function RestaurantDetailScreen() {
   const { go, establishmentId, table, openMenu, account, showToast, setPostAuthScreen } = useClient();
   const query = useRestaurant(establishmentId);
   const restaurant = query.data;
+  const bookingsOn = useFeatureEnabled('bookings');
   const { coords } = useClientLocation();
   const { favoriteIds, toggle } = useFavorites();
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -267,10 +269,12 @@ export default function RestaurantDetailScreen() {
           <CalendarCheck size={15} />
           {reservation.data?.reservation ? `Sua reserva · posição ${reservation.data.reservation.position}` : 'Reservar mesa'}
         </button>
-        <button onClick={openBooking} data-testid="booking-button" className="w-full bg-card border border-border text-foreground font-medium py-3.5 rounded-xl text-sm flex items-center justify-center gap-2">
-          <CalendarClock size={15} />
-          Reservar com data e horário
-        </button>
+        {bookingsOn && (
+          <button onClick={openBooking} data-testid="booking-button" className="w-full bg-card border border-border text-foreground font-medium py-3.5 rounded-xl text-sm flex items-center justify-center gap-2">
+            <CalendarClock size={15} />
+            Reservar com data e horário
+          </button>
+        )}
         {!restaurant.reservationsOpen && !reservation.data?.reservation && (
           <p className="text-xs text-muted-foreground text-center -mt-1">
             {closed ? 'Reservas disponíveis quando o restaurante estiver aberto.' : 'Este restaurante não aceita reservas pelo aplicativo.'}

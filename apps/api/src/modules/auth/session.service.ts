@@ -7,6 +7,7 @@ import { PrismaService } from '../../database/prisma.service.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
 import type { AuthContext, RequestMeta } from './auth.types.js';
 import { TokenService, type AccessTokenPayload } from './token.service.js';
+import { AccessLogService } from './access-log.service.js';
 
 /** Janela em que o refresh token anterior ainda é aceito (abas disparando refresh ao mesmo tempo). */
 const ROTATION_GRACE_MS = 30_000;
@@ -31,6 +32,7 @@ export class SessionService {
     private readonly tokens: TokenService,
     private readonly config: AppConfig,
     private readonly realtime: RealtimeService,
+    private readonly accessLogs: AccessLogService,
   ) {}
 
   private refreshExpiry(from: Date) {
@@ -54,6 +56,7 @@ export class SessionService {
       }),
       this.prisma.user.update({ where: { id: userId }, data: { lastAccessAt: now } }),
     ]);
+    await this.accessLogs.recordLogin(userId, session.id, meta.userAgent, meta.ipAddress);
     return this.issue(userId, session.id, refreshToken);
   }
 

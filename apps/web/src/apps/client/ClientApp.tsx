@@ -27,6 +27,7 @@ import { AddressesScreen, EditProfileScreen, ProfileScreen, ReservationsScreen }
 import { AccountSecurityScreen, DeleteAccountScreen } from './screens/AccountScreens';
 import { ClubScreen } from './screens/ClubScreen';
 import { BookingScreen, CashbackScreen, DietaryScreen, NotificationsScreen, PaymentMethodsScreen, ReviewScreen } from './screens/Sprint4Screens';
+import { OffersScreen } from './screens/Sprint5Screens';
 import OnboardingScreen from './screens/OnboardingScreen';
 import { REALTIME_EVENTS } from '@filafacil/shared';
 import { useUserRealtime } from '@/lib/realtime';
@@ -72,6 +73,7 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
   profile: () => <ProfileScreen />,
   club: () => <ClubScreen />,
   cashback: () => <CashbackScreen />,
+  offers: () => <OffersScreen />,
   'payment-methods': () => <PaymentMethodsScreen />,
   dietary: () => <DietaryScreen />,
   notifications: () => <NotificationsScreen />,
@@ -84,7 +86,7 @@ const SCREENS: Record<ClientScreen, () => ReactNode> = {
 };
 
 /** Telas que exigem conta; visitante/deslogado cai no login. */
-const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations', 'club', 'cashback', 'payment-methods', 'dietary', 'notifications', 'booking', 'review']);
+const ACCOUNT_SCREENS = new Set<ClientScreen>(['payment', 'order-confirmed', 'receipt', 'edit-profile', 'addresses', 'account-security', 'reservations', 'club', 'cashback', 'offers', 'payment-methods', 'dietary', 'notifications', 'booking', 'review']);
 
 interface LaunchParams {
   oauth: { success: boolean; error: string | null };

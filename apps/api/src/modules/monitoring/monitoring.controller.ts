@@ -1,13 +1,15 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Length, MaxLength } from 'class-validator';
-import { INTEGRATION_KINDS, type IncidentDto, type IntegrationCreatedDto, type IntegrationKind, type MonitoringOverviewDto, type Page } from '@filafacil/shared';
+import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Length, MaxLength, ValidateIf } from 'class-validator';
+import { INTEGRATION_KINDS, type IntegrationDetailDto, type IncidentDto, type IntegrationCreatedDto, type IntegrationKind, type MonitoringOverviewDto, type Page } from '@filafacil/shared';
 import { ApiErrors } from '../../common/http/api-docs.js';
 import { SkipCsrf } from '../../common/security/csrf.guard.js';
 import { PageQueryDto } from '../../common/pagination/page-query.dto.js';
 import { ToBoolean, Trim } from '../../common/validation/transforms.js';
 import { PlatformAdmin } from '../access/access.decorators.js';
+import { CurrentAuth } from '../auth/auth.decorators.js';
+import type { AuthContext } from '../auth/auth.types.js';
 import { Public } from '../auth/auth.decorators.js';
 import { MonitoringService } from './monitoring.service.js';
 
@@ -22,6 +24,31 @@ class CreateIntegrationDto {
 
   @IsIn(INTEGRATION_KINDS)
   kind!: IntegrationKind;
+
+  /** Ficha 40: URL de saúde testada pelo monitor (https). Vazio = só heartbeat. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== '')
+  @IsString()
+  @MaxLength(300)
+  healthUrl?: string | null;
+}
+
+class UpdateIntegrationDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null && value !== '')
+  @IsString()
+  @MaxLength(300)
+  healthUrl?: string | null;
+
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @Length(2, 60)
+  name?: string;
 }
 
 class IncidentsQueryDto extends PageQueryDto {
@@ -69,6 +96,28 @@ export class AdminMonitoringController {
   @ApiErrors(400, 409, 422)
   create(@Body() dto: CreateIntegrationDto): Promise<IntegrationCreatedDto> {
     return this.monitoring.createIntegration(dto);
+  }
+
+  @Get('integrations/:id')
+  @ApiOperation({ summary: 'Integração com o histórico de testes e falhas (ficha 40)' })
+  @ApiErrors(404)
+  detail(@Param('id', ParseUUIDPipe) id: string): Promise<IntegrationDetailDto> {
+    return this.monitoring.detail(id);
+  }
+
+  @Patch('integrations/:id')
+  @ApiOperation({ summary: 'Ativa/desativa a integração do estabelecimento ou altera a URL de saúde' })
+  @ApiErrors(400, 404, 409, 422)
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateIntegrationDto): Promise<IntegrationDetailDto> {
+    return this.monitoring.updateIntegration(id, dto);
+  }
+
+  @Post('integrations/:id/test')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Testa a conexão agora: falha deixa "indisponível" e abre incidente na hora' })
+  @ApiErrors(404)
+  test(@Param('id', ParseUUIDPipe) id: string, @CurrentAuth() auth: AuthContext): Promise<IntegrationDetailDto> {
+    return this.monitoring.testIntegration(id, auth.userId);
   }
 
   @Post('integrations/:id/rotate-key')

@@ -2,8 +2,6 @@ import { Injectable } from '@nestjs/common';
 import {
   BOOKING_DURATION_MINUTES,
   BOOKING_MAX_DAYS_AHEAD,
-  BOOKING_MAX_PARTY,
-  BOOKING_MIN_LEAD_MINUTES,
   BOOKING_SLOT_STEP_MINUTES,
   type BookingDto,
   type BookingSlotsDto,
@@ -17,6 +15,7 @@ import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { InboxService } from '../inbox/inbox.service.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 const DURATION_MS = BOOKING_DURATION_MINUTES * 60_000;
 /** Reserva da equipe (ficha 16) não tem duração: bloqueia a mesa por este tempo a partir do horário marcado. */
@@ -90,18 +89,23 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly inbox: InboxService,
+    private readonly settings: SettingsService,
   ) {}
 
   // ─── Cliente ──────────────────────────────────────────────────────────────
 
   async create(userId: string, dto: CreateBookingRequest, now = new Date()): Promise<BookingDto> {
+    // Ficha 43: flag e parâmetros vêm das configurações da plataforma (valem sem deploy).
+    await this.settings.assertEnabled('features.bookings', 'As reservas de mesa estão temporariamente indisponíveis.');
+    const maxParty = await this.settings.get<number>('bookings.maxPartySize');
+    const minLead = await this.settings.get<number>('bookings.minLeadMinutes');
     const startsAt = new Date(dto.startsAt);
     if (Number.isNaN(startsAt.getTime())) throw unprocessable('INVALID_BOOKING_TIME', 'Horário inválido.');
-    if (!Number.isInteger(dto.partySize) || dto.partySize < 1 || dto.partySize > BOOKING_MAX_PARTY) {
-      throw unprocessable('INVALID_PARTY_SIZE', `A reserva é para 1 a ${BOOKING_MAX_PARTY} pessoas.`);
+    if (!Number.isInteger(dto.partySize) || dto.partySize < 1 || dto.partySize > maxParty) {
+      throw unprocessable('INVALID_PARTY_SIZE', `A reserva é para 1 a ${maxParty} pessoas.`);
     }
-    if (startsAt.getTime() < now.getTime() + BOOKING_MIN_LEAD_MINUTES * 60_000) {
-      throw unprocessable('BOOKING_TOO_SOON', `Reserve com pelo menos ${BOOKING_MIN_LEAD_MINUTES} minutos de antecedência.`);
+    if (startsAt.getTime() < now.getTime() + minLead * 60_000) {
+      throw unprocessable('BOOKING_TOO_SOON', `Reserve com pelo menos ${minLead} minutos de antecedência.`);
     }
     if (startsAt.getTime() > now.getTime() + BOOKING_MAX_DAYS_AHEAD * 86_400_000) {
       throw unprocessable('BOOKING_TOO_FAR', `Só é possível reservar para os próximos ${BOOKING_MAX_DAYS_AHEAD} dias.`);
@@ -189,12 +193,14 @@ export class BookingsService {
     const to = new Date(dayStart.getTime() + 2 * 86_400_000);
     const occupations = await this.occupations(this.prisma, establishmentId, from, to);
 
+    const minLead = await this.settings.get<number>('bookings.minLeadMinutes');
+    const enabled = await this.settings.enabled('features.bookings');
     const slots: BookingSlotsDto['slots'] = [];
     for (const range of ranges) {
       const closes = range.closesAt <= range.opensAt ? range.closesAt + 1440 : range.closesAt;
       for (let minutes = range.opensAt; minutes <= closes - BOOKING_SLOT_STEP_MINUTES; minutes += BOOKING_SLOT_STEP_MINUTES) {
         const startsAt = zonedInstant(date, minutes, establishment.timezone) as Date;
-        const bookable = startsAt.getTime() >= now.getTime() + BOOKING_MIN_LEAD_MINUTES * 60_000 && startsAt.getTime() <= now.getTime() + BOOKING_MAX_DAYS_AHEAD * 86_400_000;
+        const bookable = enabled && startsAt.getTime() >= now.getTime() + minLead * 60_000 && startsAt.getTime() <= now.getTime() + BOOKING_MAX_DAYS_AHEAD * 86_400_000;
         const free = bookable && pickTable(tables, partySize, occupations, startsAt.getTime(), startsAt.getTime() + DURATION_MS) !== null;
         slots.push({ startsAt: startsAt.toISOString(), label: formatMinutes(minutes), available: free });
       }

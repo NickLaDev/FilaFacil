@@ -171,7 +171,7 @@ export const useIncidentHistory = (page: number, active?: boolean) =>
   useQuery({ queryKey: ['admin', 'monitoring', 'incidents', page, active], queryFn: ({ signal }) => api.get<Page<IncidentDto>>('/admin/monitoring/incidents', { page, pageSize: 15, active }, signal) });
 
 const afterMonitoring = () => void queryClient.invalidateQueries({ queryKey: ['admin', 'monitoring'] });
-export const createIntegration = (input: { establishmentId: string; name: string; kind: IntegrationKind }) => api.post<IntegrationCreatedDto>('/admin/monitoring/integrations', input).finally(afterMonitoring);
+export const createIntegration = (input: { establishmentId: string; name: string; kind: IntegrationKind; healthUrl?: string | null }) => api.post<IntegrationCreatedDto>('/admin/monitoring/integrations', input).finally(afterMonitoring);
 export const rotateIntegrationKey = (id: string) => api.post<IntegrationCreatedDto>(`/admin/monitoring/integrations/${id}/rotate-key`).finally(afterMonitoring);
 export const deleteIntegration = (id: string) => api.delete(`/admin/monitoring/integrations/${id}`).finally(afterMonitoring);
 

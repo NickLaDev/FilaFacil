@@ -1,8 +1,8 @@
 import type { ElementType } from 'react';
-import { BookOpen, CalendarCheck, CalendarX2, ChefHat, Clock, FileText, LayoutDashboard, LifeBuoy, Map as MapIcon, QrCode, Receipt, Tag, TrendingUp, Users } from 'lucide-react';
+import { BookOpen, Cake, CalendarCheck, CalendarX2, ChefHat, Clock, Crown, FileSpreadsheet, FileText, LayoutDashboard, LifeBuoy, Map as MapIcon, Network, QrCode, Receipt, Tag, TrendingUp, Users } from 'lucide-react';
 import type { PlanFeature } from '@filafacil/shared';
 
-export type ManagerSection = 'floor-plan' | 'waitlist' | 'qrcodes' | 'menu' | 'promotions' | 'recipes' | 'kitchen' | 'shift' | 'dashboard' | 'bookings' | 'coupons' | 'cost-report' | 'expiry' | 'support' | 'invoices';
+export type ManagerSection = 'floor-plan' | 'waitlist' | 'qrcodes' | 'menu' | 'promotions' | 'recipes' | 'kitchen' | 'shift' | 'dashboard' | 'bookings' | 'coupons' | 'cost-report' | 'expiry' | 'support' | 'invoices' | 'menu-import' | 'plans' | 'campaigns' | 'network';
 
 interface SectionDefinition {
   id: ManagerSection;
@@ -26,8 +26,10 @@ export const NAV_GROUPS: { label: string; items: SectionDefinition[] }[] = [
     label: 'Gestão',
     items: [
       { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { id: 'network', icon: Network, label: 'Minha rede' },
       { id: 'cost-report', icon: TrendingUp, label: 'Custo por período' },
       { id: 'invoices', icon: Receipt, label: 'Faturas' },
+      { id: 'plans', icon: Crown, label: 'Planos' },
       { id: 'support', icon: LifeBuoy, label: 'Suporte' },
     ],
   },
@@ -35,8 +37,10 @@ export const NAV_GROUPS: { label: string; items: SectionDefinition[] }[] = [
     label: 'Catálogo',
     items: [
       { id: 'menu', icon: BookOpen, label: 'Cardápio' },
+      { id: 'menu-import', icon: FileSpreadsheet, label: 'Importar cardápio' },
       { id: 'promotions', icon: Tag, label: 'Promoções' },
       { id: 'coupons', icon: Tag, label: 'Cupons e cashback' },
+      { id: 'campaigns', icon: Cake, label: 'Campanhas segmentadas' },
       { id: 'recipes', icon: FileText, label: 'Fichas técnicas' },
       { id: 'expiry', icon: CalendarX2, label: 'Validade de insumos' },
     ],
@@ -50,6 +54,7 @@ export const SECTION_FEATURE: Partial<Record<ManagerSection, PlanFeature>> = {
   promotions: 'promotions',
   recipes: 'recipes',
   coupons: 'promotions',
+  campaigns: 'promotions',
   'cost-report': 'recipes',
   expiry: 'recipes',
 };

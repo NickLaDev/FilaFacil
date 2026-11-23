@@ -17,6 +17,8 @@ import { EstablishmentsModule } from './modules/establishments/establishments.mo
 import { EstablishmentHistoryModule } from './modules/establishment-history/establishment-history.module.js';
 import { FavoritesModule } from './modules/favorites/favorites.module.js';
 import { FloorPlanModule } from './modules/floor-plan/floor-plan.module.js';
+import { AuditModule } from './modules/audit/audit.module.js';
+import { SettingsModule } from './modules/settings/settings.module.js';
 import { InboxModule } from './modules/inbox/inbox.module.js';
 import { HealthController } from './modules/health/health.controller.js';
 import { IngredientLotsModule } from './modules/ingredient-lots/ingredient-lots.module.js';
@@ -34,6 +36,10 @@ import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { ReportsModule } from './modules/reports/reports.module.js';
 import { SupportModule } from './modules/support/support.module.js';
 import { MonitoringModule } from './modules/monitoring/monitoring.module.js';
+import { CampaignsModule } from './modules/campaigns/campaigns.module.js';
+import { PartnersModule } from './modules/partners/partners.module.js';
+import { PlansModule } from './modules/plans/plans.module.js';
+import { PlatformModule } from './modules/platform/platform.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { ShareModule } from './modules/share/share.module.js';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module.js';
@@ -51,6 +57,8 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     DatabaseModule,
     RealtimeModule,
     NotificationsModule,
+    AuditModule,
+    SettingsModule,
     InboxModule,
     EstablishmentHistoryModule,
     StorageModule,
@@ -98,6 +106,10 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module.js';
     SupportModule,
     MonitoringModule,
     BillingModule,
+    PlatformModule,
+    PartnersModule,
+    CampaignsModule,
+    PlansModule,
     OrdersModule,
     AdminModule,
   ],

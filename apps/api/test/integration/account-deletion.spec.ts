@@ -46,8 +46,8 @@ describe('Exclusão de conta (ficha 53)', () => {
     expect((await other.get('/api/me')).status).toBe(401);
     expect((await client.get('/api/me')).status).toBe(401);
     expect((await t.browser().post('/api/auth/login').set(CSRF).send({ email: 'cliente@test.dev', password: PASSWORD })).status).toBe(401);
-    expect(t.email.messages.filter(message => message.destination === 'cliente@test.dev')).toHaveLength(1);
-    expect(t.email.messages[0]?.message).toContain('excluída');
+    // O segundo login (outro aparelho) também avisa por e-mail (ficha 52); a confirmação de exclusão é uma só.
+    expect(t.email.messages.filter(message => message.destination === 'cliente@test.dev' && message.message.includes('excluída'))).toHaveLength(1);
   });
 
   it('Pix pendente de pedido aguardando pagamento também bloqueia', async () => {

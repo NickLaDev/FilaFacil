@@ -5,6 +5,7 @@ import { AppError, badRequest, conflict, forbidden, notFound, serviceUnavailable
 import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import { PaymentMethodsService } from '../payment-methods/payment-methods.service.js';
+import { AuditService } from '../audit/audit.service.js';
 import type { Payment } from '../../generated/prisma/client.js';
 import type { AuthContext } from '../auth/auth.types.js';
 import { GatewayError, PaymentGateway, type GatewayPayment, type WebhookRequest } from '../payments/payment-gateway.js';
@@ -66,6 +67,7 @@ export class OrderPaymentsService {
     private readonly effects: OrderEffectsService,
     private readonly alerts: AlertsService,
     private readonly savedMethods: PaymentMethodsService,
+    private readonly audit: AuditService,
   ) {}
 
   // ─── Cliente: pagar ───────────────────────────────────────────────────────
@@ -390,7 +392,11 @@ export class OrderPaymentsService {
       // sem resposta: o estorno continua registrado como pedido e é conciliado depois (sync, webhook ou nova tentativa)
     }
     if (current) await this.applyLocked(target.paymentId, current);
-    if (current?.status === 'refunded') return; // inclui "já estornado" respondido pelo gateway
+    if (current?.status === 'refunded') {
+      // Ficha 42: estorno é ação sensível (dinheiro devolvido); o autor vem da sessão (equipe ou o próprio cliente).
+      await this.audit.recordSafely({ action: 'order.refunded', targetType: 'order', targetId: orderId, summary: `Pedido estornado (${options.customer ? 'cancelamento pelo cliente' : 'estorno pela equipe'})`, details: { establishmentId, paymentId: target.paymentId } });
+      return; // inclui "já estornado" respondido pelo gateway
+    }
     if (refundFailed || !current) throw refundUncertain();
     // O gateway aceitou mas ainda não reflete o estorno: o webhook ou a próxima consulta fecham o estado.
   }

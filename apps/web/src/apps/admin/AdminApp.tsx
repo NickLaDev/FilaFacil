@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, Building2, DollarSign, History, LifeBuoy, Receipt, Users } from 'lucide-react';
+import { Activity, BarChart3, Building2, DollarSign, FileClock, Handshake, History, LayoutDashboard, LifeBuoy, Network, Receipt, Settings, ShieldCheck, Users } from 'lucide-react';
 import PanelLayout, { type PanelNavGroup } from '@/components/layout/PanelLayout';
 import StaffGate from '@/components/layout/StaffGate';
 import Toast from '@/components/ui/Toast';
@@ -12,13 +12,29 @@ import BillingSection from './sections/BillingSection';
 import HistorySection from './sections/HistorySection';
 import MonitoringSection from './sections/MonitoringSection';
 import SupportSection from './sections/SupportSection';
+import AccessSection from './sections/AccessSection';
+import AuditSection from './sections/AuditSection';
+import MetricsSection from './sections/MetricsSection';
+import OrganizationsSection from './sections/OrganizationsSection';
+import OverviewSection from './sections/OverviewSection';
+import PartnersSection from './sections/PartnersSection';
+import SettingsSection from './sections/SettingsSection';
 
-type AdminSection = 'establishments' | 'users' | 'plans' | 'monitoring' | 'billing' | 'support' | 'history';
+type AdminSection = 'overview' | 'metrics' | 'establishments' | 'organizations' | 'partners' | 'users' | 'plans' | 'monitoring' | 'billing' | 'support' | 'history' | 'audit' | 'access' | 'settings';
 
 const NAV_GROUPS: PanelNavGroup<AdminSection>[] = [
   {
     items: [
+      { id: 'overview', icon: LayoutDashboard, label: 'Visão geral' },
+      { id: 'metrics', icon: BarChart3, label: 'Métricas' },
+    ],
+  },
+  {
+    label: 'Cadastros',
+    items: [
       { id: 'establishments', icon: Building2, label: 'Estabelecimentos' },
+      { id: 'organizations', icon: Network, label: 'Organizações' },
+      { id: 'partners', icon: Handshake, label: 'Novos parceiros' },
       { id: 'users', icon: Users, label: 'Usuários' },
       { id: 'plans', icon: DollarSign, label: 'Planos' },
     ],
@@ -32,20 +48,36 @@ const NAV_GROUPS: PanelNavGroup<AdminSection>[] = [
       { id: 'history', icon: History, label: 'Histórico' },
     ],
   },
+  {
+    label: 'Segurança',
+    items: [
+      { id: 'audit', icon: FileClock, label: 'Auditoria' },
+      { id: 'access', icon: ShieldCheck, label: 'Acessos' },
+      { id: 'settings', icon: Settings, label: 'Configurações' },
+    ],
+  },
 ];
 
 const SECTION_TITLES: Record<AdminSection, string> = {
+  overview: 'Visão geral da plataforma',
+  metrics: 'Métricas da plataforma',
+  organizations: 'Organizações (redes)',
+  partners: 'Aprovação de novos parceiros',
+  audit: 'Auditoria de ações sensíveis',
+  access: 'Log de acessos e dispositivos',
+  settings: 'Configurações da plataforma',
   establishments: 'Estabelecimentos',
   users: 'Usuários da plataforma',
   plans: 'Planos de assinatura',
-  monitoring: 'Integrações e incidentes',
+  monitoring: 'Integrações externas e incidentes',
   billing: 'Pagamentos da plataforma',
   support: 'Central de suporte',
   history: 'Histórico de alterações dos estabelecimentos',
 };
 
 export default function AdminApp() {
-  const [section, setSection] = useState<AdminSection>('establishments');
+  const [section, setSection] = useState<AdminSection>('overview');
+  const [establishmentSearch, setEstablishmentSearch] = useState('');
   const { toastMessage, showToast } = useToast();
 
   return (
@@ -55,12 +87,30 @@ export default function AdminApp() {
           panelLabel="Painel admin"
           groups={NAV_GROUPS}
           active={section}
-          onNavigate={setSection}
+          onNavigate={next => {
+            if (next !== 'establishments') setEstablishmentSearch('');
+            setSection(next);
+          }}
           user={{ name: me.user.name, role: 'Plataforma' }}
           onSignOut={() => void logout()}
           title={SECTION_TITLES[section]}
         >
-          {section === 'establishments' && <EstablishmentsSection notify={showToast} />}
+          {section === 'overview' && <OverviewSection onNavigate={setSection} />}
+          {section === 'metrics' && <MetricsSection />}
+          {section === 'establishments' && <EstablishmentsSection key={establishmentSearch} notify={showToast} initialSearch={establishmentSearch} />}
+          {section === 'organizations' && (
+            <OrganizationsSection
+              notify={showToast}
+              onOpenEstablishment={name => {
+                setEstablishmentSearch(name);
+                setSection('establishments');
+              }}
+            />
+          )}
+          {section === 'partners' && <PartnersSection notify={showToast} />}
+          {section === 'audit' && <AuditSection />}
+          {section === 'access' && <AccessSection notify={showToast} />}
+          {section === 'settings' && <SettingsSection notify={showToast} />}
           {section === 'users' && <UsersSection notify={showToast} currentUserId={me.user.id} />}
           {section === 'plans' && <PlansSection notify={showToast} />}
           {section === 'monitoring' && <MonitoringSection notify={showToast} />}

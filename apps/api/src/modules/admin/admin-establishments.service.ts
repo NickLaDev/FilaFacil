@@ -1,9 +1,10 @@
+import { AuditService } from '../audit/audit.service.js';
 import { Injectable } from '@nestjs/common';
 import type { AdminEstablishmentDto, AdminEstablishmentsPage, EstablishmentStatus, OrganizationDto } from '@filafacil/shared';
 import { badRequest, conflict, notFound, unprocessable } from '../../common/http/app-error.js';
 import { pageArgs } from '../../common/pagination/page-query.dto.js';
 import { isValidTimeZone, parseTime, toOpeningHourDto } from '../../common/time/opening-hours.js';
-import { PrismaService } from '../../database/prisma.service.js';
+import { PrismaService, type PrismaTx } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { diffFields, ChangeLogService, type ChangeActor } from '../establishment-history/change-log.service.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
@@ -62,6 +63,13 @@ const trackedView = (row: AdminRow): Record<string, unknown> => {
   return { ...dto, organization: dto.organization.name, plan: dto.plan.name };
 };
 
+/** Vínculos herdados da organização (admins da rede) acompanham a unidade quando ela muda de rede (ficha 35). */
+async function syncOrganizationAccess(tx: PrismaTx, establishmentId: string, fromOrganizationId: string | null, toOrganizationId: string) {
+  if (fromOrganizationId) await tx.establishmentMembership.deleteMany({ where: { establishmentId, organizationId: fromOrganizationId } });
+  const admins = await tx.organizationMember.findMany({ where: { organizationId: toOrganizationId, role: 'admin' }, select: { userId: true } });
+  await tx.establishmentMembership.createMany({ data: admins.map(admin => ({ userId: admin.userId, establishmentId, organizationId: toOrganizationId })), skipDuplicates: true });
+}
+
 const toRanges = (hours: OpeningHourInputDto[]) =>
   hours.map(hour => ({ weekday: hour.weekday, opensAt: parseTime(hour.opensAt), closesAt: Math.min(parseTime(hour.closesAt), 1440) }));
 
@@ -73,6 +81,7 @@ export class AdminEstablishmentsService {
     private readonly realtime: RealtimeService,
     private readonly images: ImageUploadService,
     private readonly changeLog: ChangeLogService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(query: ListEstablishmentsQueryDto): Promise<AdminEstablishmentsPage> {
@@ -126,6 +135,8 @@ export class AdminEstablishmentsService {
       include: ADMIN_INCLUDE,
     });
     await this.changeLog.record(this.prisma, row.id, actor, [{ field: 'created', oldValue: null, newValue: { name: row.name, plan: row.plan.name, organization: row.organization.name } }]);
+    await this.prisma.$transaction(tx => syncOrganizationAccess(tx, row.id, null, row.organizationId));
+    await this.audit.recordSafely({ action: 'establishment.created', targetType: 'establishment', targetId: row.id, summary: `Estabelecimento ${row.name} cadastrado (${row.plan.name})` });
     this.realtime.restaurantUpdated(row.id);
     return toAdminDto(row);
   }
@@ -162,7 +173,11 @@ export class AdminEstablishmentsService {
         },
         include: ADMIN_INCLUDE,
       });
-      await this.changeLog.record(tx, id, actor, diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS));
+      const changes = diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS);
+      // Ficha 35: trocar de rede tira o acesso herdado dos admins da rede antiga e dá aos da nova.
+      if (before.organizationId !== updated.organizationId) await syncOrganizationAccess(tx, id, before.organizationId, updated.organizationId);
+      await this.changeLog.record(tx, id, actor, changes);
+      if (changes.length) await this.audit.record({ action: 'establishment.updated', targetType: 'establishment', targetId: id, summary: `${updated.name}: ${changes.map(change => change.field).join(', ')}`, details: { changes } }, tx);
       return updated;
     });
     this.realtime.establishmentUpdated(id);
@@ -175,7 +190,9 @@ export class AdminEstablishmentsService {
     const row = await this.prisma.$transaction(async tx => {
       const before = await tx.establishment.findUniqueOrThrow({ where: { id }, include: ADMIN_INCLUDE });
       const updated = await tx.establishment.update({ where: { id }, data: { status }, include: ADMIN_INCLUDE });
-      await this.changeLog.record(tx, id, actor, diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS));
+      const changes = diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS);
+      await this.changeLog.record(tx, id, actor, changes);
+      if (changes.length) await this.audit.record({ action: 'establishment.status_changed', targetType: 'establishment', targetId: id, summary: `${updated.name}: ${changes.map(change => change.field).join(', ')}`, details: { changes } }, tx);
       return updated;
     });
     this.realtime.establishmentUpdated(id);
@@ -189,7 +206,9 @@ export class AdminEstablishmentsService {
     const row = await this.prisma.$transaction(async tx => {
       const before = await tx.establishment.findUniqueOrThrow({ where: { id }, include: ADMIN_INCLUDE });
       const updated = await tx.establishment.update({ where: { id }, data: { planId }, include: ADMIN_INCLUDE });
-      await this.changeLog.record(tx, id, actor, diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS));
+      const changes = diffFields(trackedView(before), trackedView(updated), TRACKED_FIELDS);
+      await this.changeLog.record(tx, id, actor, changes);
+      if (changes.length) await this.audit.record({ action: 'establishment.plan_changed', targetType: 'establishment', targetId: id, summary: `${updated.name}: ${changes.map(change => change.field).join(', ')}`, details: { changes } }, tx);
       return updated;
     });
     this.realtime.establishmentUpdated(id);

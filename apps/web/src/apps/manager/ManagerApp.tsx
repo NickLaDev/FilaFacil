@@ -29,6 +29,10 @@ import ExpirySection from './sections/sprint4/ExpirySection';
 import InvoicesSection from './sections/sprint4/InvoicesSection';
 import SupportSection from './sections/sprint4/SupportSection';
 import NotificationsBell from './components/NotificationsBell';
+import CampaignsSection from './sections/sprint5/CampaignsSection';
+import MenuImportSection from './sections/sprint5/MenuImportSection';
+import NetworkSection from './sections/sprint5/NetworkSection';
+import PlansSection from './sections/sprint5/PlansSection';
 import type { ManagerSectionProps, ManagerUnit } from './types';
 
 const toUnits = (me: MeResponse): ManagerUnit[] =>
@@ -93,6 +97,11 @@ function ManagerPanel({ me }: { me: MeResponse }) {
           section={section}
           sectionProps={{ unit: activeUnit, units: units.filter(u => u.organizationId === activeUnit.organizationId), notify: showToast }}
           onOpenFloorPlan={() => setSection('floor-plan')}
+          onOpenUnit={id => {
+            if (!units.some(u => u.id === id)) return;
+            setActiveUnitId(id);
+            setSection('dashboard');
+          }}
         />
       </PanelLayout>
       <Toast message={toastMessage} />
@@ -102,16 +111,17 @@ function ManagerPanel({ me }: { me: MeResponse }) {
 
 /** Para onde o aviso leva o gestor ao ser aberto. */
 const sectionForNotification = (kind: string): ManagerSection | null =>
-  kind.startsWith('support_') ? 'support' : kind.startsWith('invoice_') ? 'invoices' : kind === 'ingredient_expiring' ? 'expiry' : null;
+  kind.startsWith('support_') ? 'support' : kind.startsWith('invoice_') ? 'invoices' : kind === 'ingredient_expiring' ? 'expiry' : kind === 'plan_changed' ? 'plans' : null;
 
 interface UnitSectionProps {
   section: ManagerSection;
   sectionProps: ManagerSectionProps;
   onOpenFloorPlan: () => void;
+  onOpenUnit: (id: string) => void;
 }
 
 /** Seção ativa, liberada ou bloqueada conforme o plano vigente da unidade (a API aplica a mesma regra). */
-function UnitSection({ section, sectionProps, onOpenFloorPlan }: UnitSectionProps) {
+function UnitSection({ section, sectionProps, onOpenFloorPlan, onOpenUnit }: UnitSectionProps) {
   const plan = useEstablishmentPlan(sectionProps.unit.id);
 
   if (sectionProps.unit.status === 'suspended') {
@@ -148,6 +158,10 @@ function UnitSection({ section, sectionProps, onOpenFloorPlan }: UnitSectionProp
       {section === 'expiry' && <ExpirySection {...sectionProps} />}
       {section === 'support' && <SupportSection {...sectionProps} />}
       {section === 'invoices' && <InvoicesSection {...sectionProps} />}
+      {section === 'menu-import' && <MenuImportSection {...sectionProps} />}
+      {section === 'plans' && <PlansSection {...sectionProps} />}
+      {section === 'campaigns' && <CampaignsSection {...sectionProps} />}
+      {section === 'network' && <NetworkSection {...sectionProps} onOpenUnit={onOpenUnit} />}
       {section === 'qrcodes' && <QRCodesSection {...sectionProps} onOpenFloorPlan={onOpenFloorPlan} />}
     </>
   );

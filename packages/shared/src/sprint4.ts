@@ -37,7 +37,11 @@ export type AppNotificationKind =
   | 'support_new'
   | 'invoice_overdue'
   | 'invoice_issued'
-  | 'ingredient_expiring';
+  | 'ingredient_expiring'
+  | 'new_device_login'
+  | 'plan_changed'
+  | 'campaign_offer'
+  | 'partner_approved';
 
 export interface AppNotificationDto {
   id: string;
@@ -444,9 +448,9 @@ export interface CreateSupportTicketRequest {
 /** Sem heartbeat por este tempo = integração fora do ar (o monitor roda a cada 10 s: detecção em até ~40 s). */
 export const INTEGRATION_OFFLINE_AFTER_MS = 30_000;
 
-export const INTEGRATION_KINDS = ['pdv', 'erp', 'delivery', 'other'] as const;
+export const INTEGRATION_KINDS = ['pdv', 'erp', 'delivery', 'payment', 'other'] as const;
 export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
-export const INTEGRATION_KIND_LABELS: Record<IntegrationKind, string> = { pdv: 'PDV', erp: 'ERP', delivery: 'Delivery', other: 'Outra' };
+export const INTEGRATION_KIND_LABELS: Record<IntegrationKind, string> = { pdv: 'PDV', erp: 'ERP', delivery: 'Delivery', payment: 'Gateway de pagamento', other: 'Outra' };
 
 export type IntegrationStatus = 'unknown' | 'online' | 'offline';
 
@@ -458,6 +462,9 @@ export interface IntegrationDto {
   kind: IntegrationKind;
   status: IntegrationStatus;
   lastSeenAt: string | null;
+  /** Ficha 40: desativada não é monitorada. */
+  enabled: boolean;
+  healthUrl: string | null;
   createdAt: string;
 }
 
@@ -473,7 +480,7 @@ export interface IncidentDto {
   integrationKind: IntegrationKind;
   establishmentId: string;
   establishmentName: string;
-  cause: 'heartbeat_timeout' | 'reported';
+  cause: 'heartbeat_timeout' | 'reported' | 'check_failed';
   message: string;
   startedAt: string;
   resolvedAt: string | null;
@@ -505,6 +512,8 @@ export interface InvoiceDto {
   establishmentName: string;
   period: string;
   planName: string;
+  /** Ficha 58: mensalidade, cobrança proporcional de upgrade ou crédito (negativo) de downgrade. */
+  kind: 'monthly' | 'proration' | 'credit';
   amountCents: number;
   /** AAAA-MM-DD. */
   dueDate: string;

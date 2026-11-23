@@ -5,6 +5,7 @@ import { lockResource } from '../../database/advisory-lock.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { RealtimeService } from '../realtime/realtime.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 /** "Maria Silva Souza" → "Maria S."; nunca expõe o nome completo nem outros dados do cliente. */
 export const shortName = (name: string) => {
@@ -30,9 +31,11 @@ export class ReviewsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly settings: SettingsService,
   ) {}
 
   async create(userId: string, orderId: string, dto: CreateReviewRequest): Promise<MyReviewDto> {
+    await this.settings.assertEnabled('features.reviews', 'As avaliações estão temporariamente indisponíveis.');
     const order = await this.prisma.order.findFirst({ where: { id: orderId, userId }, select: { id: true, status: true, establishmentId: true } });
     if (!order) throw notFound('Pedido não encontrado.');
     if (order.status !== 'delivered') throw unprocessable('ORDER_NOT_DELIVERED', 'Você pode avaliar o pedido depois de retirá-lo.');

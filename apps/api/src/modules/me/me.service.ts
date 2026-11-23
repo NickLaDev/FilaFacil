@@ -7,6 +7,17 @@ import { ME_INCLUDE, toAuthUser, toMemberships } from './me.mapper.js';
 
 const MAX_ADDRESSES = 10;
 
+/** Data de nascimento válida (existe no calendário, não está no futuro, idade até 120 anos). */
+function parseBirthDate(value: string | null): Date | null {
+  if (value === null) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  const now = new Date();
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value || date > now || now.getUTCFullYear() - date.getUTCFullYear() > 120) {
+    throw badRequest('VALIDATION_FAILED', 'Dados inválidos.', [{ field: 'birthDate', message: 'Data de nascimento inválida.' }]);
+  }
+  return date;
+}
+
 const toAddressDto = ({ id, label, street, city, isDefault }: AddressDto): AddressDto => ({ id, label, street, city, isDefault });
 
 @Injectable()
@@ -43,6 +54,7 @@ export class MeService {
       data: {
         name: dto.name,
         ...(dto.dietaryRestrictions !== undefined && { dietaryRestrictions: dto.dietaryRestrictions }),
+        ...(dto.birthDate !== undefined && { birthDate: parseBirthDate(dto.birthDate) }),
         email,
         phone,
         ...(email !== current.email && { emailVerifiedAt: null }),

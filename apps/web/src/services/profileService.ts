@@ -8,7 +8,7 @@ const addressesKey = ['me', 'addresses'] as const;
 const refreshAddresses = () => queryClient.invalidateQueries({ queryKey: addressesKey });
 
 /** Ficha 13: o perfil salvo no servidor vale na hora para as próximas consultas. */
-export async function updateProfile(changes: { name: string; email: string; phone: string }) {
+export async function updateProfile(changes: { name: string; email: string; phone: string; birthDate?: string | null }) {
   const me = await api.patch<MeResponse>('/me', changes);
   queryClient.setQueryData(meQueryKey, me);
   return me;

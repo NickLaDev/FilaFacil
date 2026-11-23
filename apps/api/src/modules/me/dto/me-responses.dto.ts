@@ -30,6 +30,7 @@ export class AuthUserDto implements AuthUser {
   hasPassword!: boolean;
   onboardingCompletedAt!: string | null;
   dietaryRestrictions!: string[];
+  birthDate!: string | null;
   @ApiProperty({ enum: PERMISSION_KEYS, isArray: true })
   permissions!: Permission[];
   createdAt!: string;

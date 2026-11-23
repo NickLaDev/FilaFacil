@@ -464,53 +464,53 @@ describe('Sprint 4 — gestão da plataforma e da casa (33, 38, 39, 57, 66, 70)'
     const invoices = async (query = '') => (await admin.get(`/api/admin/invoices${query}`)).body;
 
     it('gera a fatura do mês para cada casa ativa (uma por mês, idempotente) e a casa a vê', async () => {
-      const now = new Date('2026-11-05T15:00:00Z');
+      const now = new Date('2099-11-05T15:00:00Z');
       expect(await billing.runCycle(now)).toEqual({ generated: 3, markedOverdue: 0, notified: 0 });
       expect(await billing.runCycle(now)).toEqual({ generated: 0, markedOverdue: 0, notified: 0 });
       const page = await invoices();
       expect(page.total).toBe(3);
-      expect(page.items.find((i: { establishmentName: string }) => i.establishmentName === 'Bar A')).toMatchObject({ period: '2026-11', planName: 'Business', amountCents: 79_900, dueDate: '2026-11-10', status: 'pending' });
+      expect(page.items.find((i: { establishmentName: string }) => i.establishmentName === 'Bar A')).toMatchObject({ period: '2099-11', planName: 'Business', amountCents: 79_900, dueDate: '2099-11-10', status: 'pending' });
       expect(page.counts).toMatchObject({ all: 3, pending: 3, paid: 0, overdue: 0 });
       const mine = (await manager.get(`${est()}/invoices`)).body;
       expect(mine).toHaveLength(1);
-      expect(mine[0]).toMatchObject({ period: '2026-11', status: 'pending' });
+      expect(mine[0]).toMatchObject({ period: '2099-11', status: 'pending' });
       expect((await managerB.get(`${est()}/invoices`)).status).toBe(403); // outra casa
       expect((await attendant.get(`${est()}/invoices`)).status).toBe(403);
       const inbox = (await manager.get(`${est()}/notifications`)).body.items.map((n: { kind: string }) => n.kind);
       expect(inbox).toContain('invoice_issued');
-      expect(await billing.runCycle(new Date('2026-12-02T12:00:00Z'))).toMatchObject({ generated: 3 }); // mês seguinte
+      expect(await billing.runCycle(new Date('2099-12-02T12:00:00Z'))).toMatchObject({ generated: 3 }); // mês seguinte
     });
 
     it('fatura vencida muda sozinha para "atrasado" e avisa a casa no dia seguinte, sem repetir no mesmo dia', async () => {
-      await billing.runCycle(new Date('2026-11-05T15:00:00Z'));
+      await billing.runCycle(new Date('2099-11-05T15:00:00Z'));
       // No dia do vencimento (até 23h59 de Brasília) ainda não está atrasada.
-      expect(await billing.runCycle(new Date('2026-11-11T01:00:00Z'))).toMatchObject({ markedOverdue: 0, notified: 0 });
+      expect(await billing.runCycle(new Date('2099-11-11T01:00:00Z'))).toMatchObject({ markedOverdue: 0, notified: 0 });
       expect((await invoices('?status=pending')).total).toBe(3);
 
-      const nextDay = new Date('2026-11-11T12:00:00Z');
+      const nextDay = new Date('2099-11-11T12:00:00Z');
       expect(await billing.runCycle(nextDay)).toEqual({ generated: 0, markedOverdue: 3, notified: 3 });
       const late = await invoices('?status=overdue');
       expect(late.total).toBe(3);
       expect(late.overdueCents).toBe(79_900 * 2 + 9_900);
       expect(late.items[0].status).toBe('overdue');
       const notice = (await manager.get(`${est()}/notifications`)).body.items.find((n: { kind: string }) => n.kind === 'invoice_overdue');
-      expect(notice).toMatchObject({ title: 'Fatura 11/2026 em atraso' });
-      expect(notice.body).toContain('venceu em 10/11/2026');
+      expect(notice).toMatchObject({ title: 'Fatura 11/2099 em atraso' });
+      expect(notice.body).toContain('venceu em 10/11/2099');
 
-      expect(await billing.runCycle(new Date('2026-11-11T20:00:00Z'))).toMatchObject({ markedOverdue: 0, notified: 0 }); // mesmo dia
-      expect(await billing.runCycle(new Date('2026-11-14T13:00:00Z'))).toMatchObject({ notified: 3 }); // lembrete após 3 dias
+      expect(await billing.runCycle(new Date('2099-11-11T20:00:00Z'))).toMatchObject({ markedOverdue: 0, notified: 0 }); // mesmo dia
+      expect(await billing.runCycle(new Date('2099-11-14T13:00:00Z'))).toMatchObject({ notified: 3 }); // lembrete após 3 dias
     });
 
     it('a leitura já mostra a pendente vencida como atrasada, mesmo antes da rotina rodar', async () => {
-      await billing.runCycle(new Date('2026-11-05T15:00:00Z'));
-      const asOf = await billing.list({ page: 1, pageSize: 20, status: undefined }, new Date('2026-11-12T12:00:00Z'));
+      await billing.runCycle(new Date('2099-11-05T15:00:00Z'));
+      const asOf = await billing.list({ page: 1, pageSize: 20, status: undefined }, new Date('2099-11-12T12:00:00Z'));
       expect(asOf.items.every(item => item.status === 'overdue')).toBe(true);
       expect(asOf.counts.overdue).toBe(3);
     });
 
     it('registrar o pagamento encerra a pendência e os avisos; não paga duas vezes; cancelar só pendente/atrasada', async () => {
-      await billing.runCycle(new Date('2026-11-05T15:00:00Z'));
-      await billing.runCycle(new Date('2026-11-11T12:00:00Z'));
+      await billing.runCycle(new Date('2099-11-05T15:00:00Z'));
+      await billing.runCycle(new Date('2099-11-11T12:00:00Z'));
       const mine = (await invoices(`?establishmentId=${world.estA.id}`)).items[0];
       const paid = await admin.post(`/api/admin/invoices/${mine.id}/pay`).set(CSRF).send({ note: 'PIX confirmado' });
       expect(paid.status).toBe(200);
@@ -518,7 +518,7 @@ describe('Sprint 4 — gestão da plataforma e da casa (33, 38, 39, 57, 66, 70)'
       expect(paid.body.paidAt).not.toBeNull();
       expect((await admin.post(`/api/admin/invoices/${mine.id}/pay`).set(CSRF).send({})).body.code).toBe('INVOICE_NOT_PAYABLE');
       expect((await admin.post(`/api/admin/invoices/${mine.id}/cancel`).set(CSRF)).status).toBe(409);
-      expect(await billing.runCycle(new Date('2026-11-20T12:00:00Z'))).toMatchObject({ notified: 2 }); // só as outras duas
+      expect(await billing.runCycle(new Date('2099-11-20T12:00:00Z'))).toMatchObject({ notified: 2 }); // só as outras duas
       const other = (await invoices(`?establishmentId=${world.estB.id}`)).items[0];
       expect((await admin.post(`/api/admin/invoices/${other.id}/cancel`).set(CSRF)).body.status).toBe('cancelled');
       expect((await invoices()).counts).toMatchObject({ all: 3, paid: 1, cancelled: 1, overdue: 1 });
@@ -528,16 +528,16 @@ describe('Sprint 4 — gestão da plataforma e da casa (33, 38, 39, 57, 66, 70)'
     it('não cobra casa inativa nem plano gratuito, nem gera fatura já vencida para casa recém-cadastrada', async () => {
       await t.prisma.establishment.update({ where: { id: world.estB.id }, data: { status: 'inactive' } });
       await t.prisma.plan.update({ where: { id: world.plans.start.id }, data: { monthlyPriceCents: 0 } });
-      expect(await billing.runCycle(new Date('2026-11-05T15:00:00Z'))).toMatchObject({ generated: 1 });
-      await t.prisma.establishment.update({ where: { id: world.estB.id }, data: { status: 'active', createdAt: new Date('2026-11-20T12:00:00Z') } });
-      expect(await billing.runCycle(new Date('2026-11-25T12:00:00Z'))).toMatchObject({ generated: 0 }); // criada depois do vencimento: cobra só em dezembro
-      expect(await billing.runCycle(new Date('2026-12-03T12:00:00Z'))).toMatchObject({ generated: 2 });
+      expect(await billing.runCycle(new Date('2099-11-05T15:00:00Z'))).toMatchObject({ generated: 1 });
+      await t.prisma.establishment.update({ where: { id: world.estB.id }, data: { status: 'active', createdAt: new Date('2099-11-20T12:00:00Z') } });
+      expect(await billing.runCycle(new Date('2099-11-25T12:00:00Z'))).toMatchObject({ generated: 0 }); // criada depois do vencimento: cobra só em dezembro
+      expect(await billing.runCycle(new Date('2099-12-03T12:00:00Z'))).toMatchObject({ generated: 2 });
     });
 
     it('filtros por status, casa, mês e busca; só a plataforma com permissão de cobrança acessa', async () => {
-      await billing.runCycle(new Date('2026-11-05T15:00:00Z'));
-      await billing.runCycle(new Date('2026-12-03T12:00:00Z'));
-      expect((await invoices('?period=2026-12')).total).toBe(3);
+      await billing.runCycle(new Date('2099-11-05T15:00:00Z'));
+      await billing.runCycle(new Date('2099-12-03T12:00:00Z'));
+      expect((await invoices('?period=2099-12')).total).toBe(3);
       expect((await invoices('?q=Start')).total).toBe(2);
       expect((await invoices('?status=paid')).total).toBe(0);
       expect((await invoices('?pageSize=2')).items).toHaveLength(2);
