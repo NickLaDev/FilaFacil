@@ -342,6 +342,8 @@ async function seedEstablishments() {
       tags: e.tags,
       ratingAverage: new Prisma.Decimal(e.rating),
       ratingCount: e.ratingCount,
+      // A média é sempre ratingSum / ratingCount (ficha 48): sem a soma coerente, a primeira avaliação real zeraria a nota.
+      ratingSum: Math.round(e.rating * e.ratingCount),
       averageWaitMinutes: e.wait,
       ordersPaused: e.paused ?? false,
       highDemand: e.highDemand ?? false,
