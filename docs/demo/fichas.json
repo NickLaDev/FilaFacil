@@ -1,0 +1,314 @@
+{
+ "15": {
+  "title": "Cashback em pedidos",
+  "points": 5,
+  "story": "Como cliente, quero receber cashback automaticamente em pedidos elegíveis dentro de promoções específicas, para acumular saldo e usá-lo como desconto direto na minha próxima compra, sem precisar de cupom.",
+  "tasks": [
+   "Definir regras de cashback por estabelecimento/promoção",
+   "Calcular e creditar valor após pedido entregue",
+   "Exibir saldo de cashback no perfil",
+   "Permitir uso do saldo em pedidos futuros"
+  ],
+  "criterion": "Cashback aparece no perfil em até 24h após o pedido ser marcado como entregue e pode ser usado no checkout seguinte."
+ },
+ "33": {
+  "title": "Monitoramento de incidentes e integrações",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero ser avisado assim que uma integração cair (como o PDV), sabendo quantos estabelecimentos estão sendo impactados, para agir rápido, acionar o time técnico e minimizar o prejuízo de quem depende da plataforma.",
+  "tasks": [
+   "Monitorar status das integrações em tempo real",
+   "Criar alerta de incidente ativo no painel admin",
+   "Mostrar quantos estabelecimentos são impactados",
+   "Registrar histórico de incidentes para auditoria"
+  ],
+  "criterion": "Um incidente ativo aparece no painel em até 1 minuto da queda, com contagem correta de estabelecimentos impactados."
+ },
+ "30": {
+  "title": "Reservas de mesa",
+  "points": 5,
+  "story": "Como cliente, quero reservar uma mesa informando data, horário e número de pessoas, para garantir meu lugar antes de chegar e não correr o risco de ficar esperando na fila em um estabelecimento cheio.",
+  "tasks": [
+   "Criar tela de reserva para o cliente",
+   "Criar tela de gestão de reservas para o gestor",
+   "Confirmar ou recusar reserva automaticamente por disponibilidade",
+   "Notificar cliente sobre a confirmação da reserva"
+  ],
+  "criterion": "Uma reserva confirmada aparece tanto no perfil do cliente quanto no painel do gestor, com status \"confirmada\"."
+ },
+ "38": {
+  "title": "Pagamentos da plataforma",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero acompanhar as faturas e pagamentos de todos os estabelecimentos, com status de pago, pendente ou atrasado, para controlar a receita da plataforma e cobrar automaticamente quem estiver inadimplente.",
+  "tasks": [
+   "Criar tela de faturas por estabelecimento",
+   "Exibir status de pagamento (pago, pendente, atrasado)",
+   "Gerar cobrança automática recorrente",
+   "Notificar estabelecimento sobre pendências"
+  ],
+  "criterion": "Uma fatura vencida muda automaticamente para \"atrasado\" e dispara notificação ao estabelecimento no dia seguinte."
+ },
+ "39": {
+  "title": "Central de suporte",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero gerenciar os chamados de suporte abertos pelos estabelecimentos, priorizando por urgência e mantendo histórico de conversa, para resolver problemas rapidamente e manter os parceiros satisfeitos com o atendimento.",
+  "tasks": [
+   "Criar central de chamados com status (aberto, em andamento, resolvido)",
+   "Priorizar chamados por urgência",
+   "Permitir resposta e histórico de conversa",
+   "Notificar estabelecimento quando o chamado for respondido"
+  ],
+  "criterion": "Um chamado aberto aparece na fila de suporte em até 1 minuto e o estabelecimento é notificado a cada resposta."
+ },
+ "49": {
+  "title": "Salvar métodos de pagamento",
+  "points": 5,
+  "story": "Como cliente, quero salvar meus cartões e formas de pagamento preferidas, para pagar pedidos futuros sem precisar digitar os dados de novo.",
+  "tasks": [
+   "Criar tela de métodos de pagamento salvos",
+   "Integrar tokenização segura de cartão",
+   "Permitir definir um método como padrão",
+   "Permitir remover um método salvo"
+  ],
+  "criterion": "Um cartão salvo aparece pré-selecionado no checkout seguinte, sem exigir que o cliente redigite os dados."
+ },
+ "48": {
+  "title": "Avaliar pedido e restaurante",
+  "points": 5,
+  "story": "Como cliente, quero avaliar meu pedido e o restaurante depois de retirar, para compartilhar minha experiência e ajudar outros clientes a escolher.",
+  "tasks": [
+   "Criar tela de avaliação com nota e comentário",
+   "Disparar pedido de avaliação após o pedido ser entregue",
+   "Calcular a nota média do restaurante",
+   "Exibir avaliações recentes na página do restaurante"
+  ],
+  "criterion": "Uma avaliação enviada atualiza a nota média do restaurante em até 1 minuto e aparece na lista de avaliações recentes."
+ },
+ "56": {
+  "title": "Cupom de desconto por código",
+  "points": 5,
+  "story": "Como cliente, quero inserir um código de cupom no checkout, para aplicar um desconto recebido em uma campanha de marketing.",
+  "tasks": [
+   "Criar campo de código de cupom no checkout",
+   "Validar se o cupom é válido, ativo e aplicável ao pedido",
+   "Aplicar o desconto automaticamente ao valor total",
+   "Impedir o uso do mesmo cupom mais de uma vez por cliente"
+  ],
+  "criterion": "Um cupom válido aplica o desconto correto na hora; um cupom expirado ou já usado é recusado com mensagem clara ao cliente."
+ },
+ "64": {
+  "title": "Preferências alimentares e alergias",
+  "points": 3,
+  "story": "Como cliente, quero informar restrições alimentares e alergias no meu perfil, para receber avisos automáticos quando um item do cardápio contiver algo que não posso comer.",
+  "tasks": [
+   "Adicionar campo de restrições e alergias no perfil",
+   "Cadastrar alérgenos por item do cardápio",
+   "Exibir aviso visual em itens que contenham algo restrito ao cliente",
+   "Permitir múltiplas restrições cadastradas por cliente"
+  ],
+  "criterion": "Um item com alérgeno cadastrado como restrição do cliente exibe um aviso visual claro antes de ser adicionado ao carrinho."
+ },
+ "62": {
+  "title": "Compartilhar restaurante (link)",
+  "points": 3,
+  "story": "Como cliente, quero compartilhar a página de um restaurante com amigos por link, para combinar onde vamos pedir ou nos encontrar sem precisar explicar tudo por mensagem.",
+  "tasks": [
+   "Gerar link público da página do restaurante",
+   "Adicionar botão de compartilhar via apps de mensagem",
+   "Abrir a página correta do restaurante ao clicar no link",
+   "Registrar a origem do acesso para métricas de marketing"
+  ],
+  "criterion": "Um link compartilhado abre direto na página do restaurante correspondente, mesmo para quem ainda não tem o app instalado."
+ },
+ "57": {
+  "title": "Relatório de custo por período",
+  "points": 5,
+  "story": "Como gestor, quero ver um relatório do custo dos pratos vendidos em um período, para entender minha margem real e ajustar preços quando necessário.",
+  "tasks": [
+   "Calcular o custo total com base nas fichas técnicas e nas vendas do período",
+   "Criar tela de relatório com filtro de datas",
+   "Exibir margem de lucro por item e por categoria",
+   "Permitir exportar o relatório em CSV/PDF"
+  ],
+  "criterion": "O relatório do mês bate com a soma dos custos das fichas técnicas multiplicados pela quantidade vendida de cada item no período."
+ },
+ "67": {
+  "title": "Duplicar item do cardápio",
+  "points": 3,
+  "story": "Como gestor, quero duplicar um item já cadastrado no cardápio, para criar variações parecidas (como tamanhos ou sabores) sem preencher tudo do zero.",
+  "tasks": [
+   "Adicionar botão \"duplicar\" em cada item do cardápio",
+   "Copiar nome, descrição, foto e categoria do item original",
+   "Permitir editar o item duplicado antes de salvar",
+   "Impedir dois itens idênticos ativos ao mesmo tempo"
+  ],
+  "criterion": "Um item duplicado é criado em segundos com os mesmos dados do original, pronto para pequenos ajustes de nome e preço."
+ },
+ "66": {
+  "title": "Histórico de alterações do estabelecimento",
+  "points": 3,
+  "story": "Como administrador da plataforma, quero ver o histórico de alterações feitas no cadastro de um estabelecimento, para entender quem mudou o quê e quando em caso de dúvida ou disputa.",
+  "tasks": [
+   "Registrar automaticamente alterações no cadastro do estabelecimento",
+   "Criar tela de histórico com data, autor e campo alterado",
+   "Permitir comparar o valor antes e depois da alteração",
+   "Impedir exclusão do histórico de alterações"
+  ],
+  "criterion": "Toda alteração no cadastro de um estabelecimento gera um registro consultável, com autor, data e o valor anterior preservado."
+ },
+ "70": {
+  "title": "Alerta de ingrediente perto do vencimento",
+  "points": 3,
+  "story": "Como gestor, quero receber um alerta quando um ingrediente estiver perto da validade, para priorizar seu uso ou evitar desperdício e prejuízo no estoque.",
+  "tasks": [
+   "Cadastrar data de validade por lote de ingrediente",
+   "Monitorar os prazos de validade cadastrados",
+   "Disparar alerta ao gestor conforme o vencimento se aproxima",
+   "Sugerir pratos que usam o ingrediente próximo do vencimento"
+  ],
+  "criterion": "O alerta chega ao gestor com pelo menos 3 dias de antecedência do vencimento cadastrado para o ingrediente."
+ },
+ "32": {
+  "title": "Painel administrativo multi-estabelecimento",
+  "points": 8,
+  "story": "Como administrador da plataforma, quero ver uma visão geral de todos os estabelecimentos ativos, com pedidos, GMV e usuários do dia, para monitorar a saúde do negócio como um todo e identificar rapidamente qualquer estabelecimento com problema.",
+  "tasks": [
+   "Criar visão geral com estabelecimentos ativos, pedidos e GMV do dia",
+   "Comparar métricas com o dia anterior",
+   "Listar usuários ativos na plataforma",
+   "Permitir navegação para organizações e usuários"
+  ],
+  "criterion": "As métricas gerais batem com a soma dos dados de todos os estabelecimentos ativos na plataforma."
+ },
+ "40": {
+  "title": "Integrações externas",
+  "points": 8,
+  "story": "Como administrador da plataforma, quero gerenciar as integrações externas da plataforma (PDV, gateways de pagamento, entre outras), testando a conexão manualmente quando necessário, para garantir que estejam sempre funcionando e evitar impacto na operação dos estabelecimentos.",
+  "tasks": [
+   "Criar tela de status das integrações",
+   "Permitir ativar/desativar integração por estabelecimento",
+   "Testar conexão manualmente",
+   "Registrar histórico de falhas"
+  ],
+  "criterion": "Uma integração que falha aparece com status \"indisponível\" em até 1 minuto e gera um incidente automaticamente."
+ },
+ "35": {
+  "title": "Organizações",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero agrupar estabelecimentos em organizações (redes com várias unidades), para gerenciar permissões e relatórios de forma consolidada, sem precisar tratar cada unidade como um cliente isolado.",
+  "tasks": [
+   "Criar tela de organizações",
+   "Vincular múltiplos estabelecimentos a uma organização",
+   "Definir hierarquia de permissões por organização",
+   "Exibir relatório consolidado por organização"
+  ],
+  "criterion": "Uma organização com várias unidades mostra dados consolidados corretos e permite navegar para cada estabelecimento."
+ },
+ "41": {
+  "title": "Métricas da plataforma",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero ver métricas agregadas de uso — pedidos, GMV e usuários ativos — filtráveis por período e comparáveis entre si, para entender a evolução do negócio e embasar decisões estratégicas com dados reais.",
+  "tasks": [
+   "Criar tela de métricas com filtro por período",
+   "Exibir gráficos de evolução (pedidos, GMV, usuários)",
+   "Permitir comparação entre períodos",
+   "Exportar relatório em CSV/PDF"
+  ],
+  "criterion": "Ao filtrar por período, os gráficos e números recalculam corretamente e batem com a soma dos dados por estabelecimento."
+ },
+ "42": {
+  "title": "Auditoria",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero consultar um log de auditoria com todas as ações sensíveis realizadas no sistema, incluindo quem fez o quê e quando, para investigar problemas com segurança e garantir conformidade em eventuais fiscalizações.",
+  "tasks": [
+   "Registrar automaticamente ações sensíveis do sistema",
+   "Criar tela de consulta com filtro por usuário, ação e data",
+   "Exibir detalhes de cada evento (quem, o quê, quando)",
+   "Impedir edição ou exclusão dos registros"
+  ],
+  "criterion": "Toda ação sensível (ex: exclusão de usuário) gera um registro de auditoria imutável, consultável em até 1 minuto."
+ },
+ "52": {
+  "title": "Log de acesso e dispositivos",
+  "points": 3,
+  "story": "Como administrador da plataforma, quero ver o log de acessos e dispositivos usados por cada usuário, para identificar acessos suspeitos e reforçar a segurança da conta.",
+  "tasks": [
+   "Registrar data, hora, IP e dispositivo de cada login",
+   "Criar tela de histórico de acessos por usuário",
+   "Permitir encerrar sessões remotamente",
+   "Alertar sobre login em dispositivo não reconhecido"
+  ],
+  "criterion": "Um login de dispositivo não reconhecido gera um registro imediato e pode ser encerrado remotamente pelo administrador em um clique."
+ },
+ "43": {
+  "title": "Configurações da plataforma",
+  "points": 3,
+  "story": "Como administrador da plataforma, quero gerenciar configurações gerais e ativar ou desativar funcionalidades por meio de flags, para controlar o comportamento da plataforma em tempo real, sem depender de um novo deploy para cada ajuste.",
+  "tasks": [
+   "Criar tela de configurações gerais",
+   "Permitir ativar/desativar features por flag",
+   "Definir parâmetros globais (limites, tempos padrão)",
+   "Validar impacto antes de salvar alteração crítica"
+  ],
+  "criterion": "Uma alteração em uma configuração reflete no comportamento da plataforma em até 1 minuto, sem necessidade de novo deploy."
+ },
+ "54": {
+  "title": "Importar cardápio em massa",
+  "points": 5,
+  "story": "Como gestor, quero importar o cardápio inteiro de uma planilha, para cadastrar todos os itens de uma vez em vez de um por um.",
+  "tasks": [
+   "Criar modelo de planilha para importação",
+   "Validar dados obrigatórios antes de importar",
+   "Exibir relatório de itens importados com sucesso ou erro",
+   "Permitir corrigir e reimportar itens com erro"
+  ],
+  "criterion": "Uma planilha com 50 itens é importada corretamente em menos de 1 minuto, com relatório claro de qualquer linha que precise de correção."
+ },
+ "55": {
+  "title": "Aprovação de novo parceiro",
+  "points": 5,
+  "story": "Como administrador da plataforma, quero revisar e aprovar o cadastro de novos estabelecimentos parceiros, para garantir que só entrem na plataforma negócios que cumprem os critérios definidos.",
+  "tasks": [
+   "Criar fila de estabelecimentos aguardando aprovação",
+   "Exibir dados e documentos enviados pelo estabelecimento",
+   "Permitir aprovar, recusar ou pedir mais informações",
+   "Notificar o estabelecimento sobre a decisão"
+  ],
+  "criterion": "Um estabelecimento aprovado passa a aceitar pedidos na hora; um recusado recebe o motivo da recusa por notificação."
+ },
+ "68": {
+  "title": "Promoção segmentada por cliente",
+  "points": 5,
+  "story": "Como gestor, quero criar promoções segmentadas para grupos específicos de clientes (como aniversariantes ou clientes inativos), para trazer de volta quem já não pede há um tempo e fidelizar quem sempre volta.",
+  "tasks": [
+   "Criar segmentos de clientes (aniversariantes, inativos, frequentes)",
+   "Vincular uma promoção a um segmento específico",
+   "Disparar a promoção automaticamente para o segmento elegível",
+   "Medir a taxa de uso da promoção por segmento"
+  ],
+  "criterion": "Uma promoção de aniversário chega automaticamente ao cliente elegível no dia certo, sem precisar de disparo manual pelo gestor."
+ },
+ "58": {
+  "title": "Upgrade/downgrade self-service",
+  "points": 5,
+  "story": "Como gestor, quero mudar o plano de assinatura do meu estabelecimento sozinho pelo painel, para ajustar os recursos contratados sem precisar abrir um chamado de suporte.",
+  "tasks": [
+   "Criar tela de comparação e troca de plano",
+   "Calcular valor proporcional na troca (upgrade ou downgrade)",
+   "Aplicar a mudança de recursos imediatamente após a confirmação",
+   "Enviar confirmação da troca por e-mail"
+  ],
+  "criterion": "Ao confirmar a troca de plano, os novos recursos ficam disponíveis no painel do gestor em até 1 minuto, com cobrança proporcional correta."
+ },
+ "69": {
+  "title": "Comparativo de planos lado a lado",
+  "points": 3,
+  "story": "Como gestor, quero ver um comparativo lado a lado dos planos de assinatura disponíveis, para entender claramente as diferenças de recursos e preço antes de decidir por um upgrade.",
+  "tasks": [
+   "Criar tela de comparação com os planos em colunas",
+   "Destacar as diferenças de recursos entre os planos",
+   "Sinalizar o plano atualmente contratado",
+   "Adicionar botão de troca direto na tela de comparação"
+  ],
+  "criterion": "O comparativo mostra corretamente os recursos de cada plano lado a lado, com o plano atual do estabelecimento destacado."
+ }
+}
