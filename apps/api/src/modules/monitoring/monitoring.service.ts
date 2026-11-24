@@ -188,7 +188,9 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   /** Varre integrações online sem sinal dentro do prazo e abre o incidente (um por integração). Devolve quantos abriu. */
   async checkOffline(now = new Date()): Promise<number> {
     const limit = new Date(now.getTime() - (await this.settings.get<number>('integrations.offlineAfterSeconds')) * 1000);
-    const silent = await this.prisma.integration.findMany({ where: { enabled: true, status: 'online', lastSeenAt: { lt: limit } }, select: { id: true, establishmentId: true, name: true, lastSeenAt: true } });
+    // Integrações com URL de saúde são testadas ativamente (probeAll, a cada 30 s): varrer por "sem sinal" com o mesmo prazo
+    // de 30 s abria e fechava incidentes falsos a cada rodada.
+    const silent = await this.prisma.integration.findMany({ where: { enabled: true, status: 'online', healthUrl: null, lastSeenAt: { lt: limit } }, select: { id: true, establishmentId: true, name: true, lastSeenAt: true } });
     let opened = 0;
     for (const integration of silent) {
       await this.prisma.integration.updateMany({ where: { id: integration.id, status: 'online' }, data: { status: 'offline' } });
